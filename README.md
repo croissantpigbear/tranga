@@ -181,8 +181,8 @@ The container also spins up a Swagger site at `http://<url>/swagger`.
 This fork has no published images, so build them yourself (AMD64 and ARM64, e.g. Raspberry Pi 4 with a 64-bit OS):
 
 ```
-git clone -b claude https://github.com/croissantpigbear/tranga.git
-git clone -b claude https://github.com/croissantpigbear/tranga-website.git
+git clone -b tranga-plus https://github.com/croissantpigbear/tranga.git
+git clone -b tranga-plus https://github.com/croissantpigbear/tranga-website.git
 docker build --platform linux/amd64 -t tranga-claude-api:latest ./tranga                # or linux/arm64
 docker build --platform linux/amd64 -t tranga-claude-website:latest ./tranga-website    # or linux/arm64
 ```
