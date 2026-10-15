@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using API.Downloads;
 using API.Schema.MangaContext;
 using API.Workers.MangaDownloadWorkers;
 using Microsoft.EntityFrameworkCore;
@@ -36,9 +37,12 @@ public class StartNewChapterDownloadsWorker(TimeSpan? interval = null, IEnumerab
             .Where(w => w.State is >= WorkerExecutionState.Created and < WorkerExecutionState.Completed)
             .ToList();
         HashSet<string> chaptersDownloading = running.Select(w => w.ChapterIdId).ToHashSet();
-        missingChapters.RemoveAll(ch => chaptersDownloading.Contains(ch.Key));
         // Chapters linked to websites Tranga no longer has (removed built-ins, deleted modules) can't be downloaded
         missingChapters.RemoveAll(ch => !Tranga.TryGetMangaConnector(ch.MangaConnectorName, out _));
+        // Series download in queue order (first added, first downloaded); counted before removing running chapters,
+        // so a series whose last chapters are downloading keeps its place
+        Dictionary<string, int> queuePosition = DownloadQueue.Sync(missingChapters.Select(ch => ch.Obj.ParentMangaId));
+        missingChapters.RemoveAll(ch => chaptersDownloading.Contains(ch.Key));
         Log.DebugFormat("{0} chapter not being downloaded", missingChapters.Count);
         
         // Maximum concurrent downloads, overall and per website
@@ -52,7 +56,10 @@ public class StartNewChapterDownloadsWorker(TimeSpan? interval = null, IEnumerab
             running.Count, string.Join(", ", perConnectorRunning.Select(kv => $"{kv.Key}: {kv.Value}")), amountNewWorkers, perConnector);
 
         List<MangaConnectorId<Chapter>> newDownloadChapters = [];
-        foreach (MangaConnectorId<Chapter> ch in missingChapters.OrderBy(ch => ch.Obj, new Chapter.ChapterComparer()))
+        IEnumerable<MangaConnectorId<Chapter>> inQueueOrder = missingChapters
+            .OrderBy(ch => queuePosition.GetValueOrDefault(ch.Obj.ParentMangaId, int.MaxValue))
+            .ThenBy(ch => ch.Obj, new Chapter.ChapterComparer());
+        foreach (MangaConnectorId<Chapter> ch in inQueueOrder)
         {
             if (newDownloadChapters.Count >= amountNewWorkers)
                 break;
