@@ -42,7 +42,10 @@ public class StartNewChapterDownloadsWorker(TimeSpan? interval = null, IEnumerab
         // Series download in queue order (first added, first downloaded); counted before removing running chapters,
         // so a series whose last chapters are downloading keeps its place
         Dictionary<string, int> queuePosition = DownloadQueue.Sync(missingChapters.Select(ch => ch.Obj.ParentMangaId));
-        missingChapters.RemoveAll(ch => chaptersDownloading.Contains(ch.Key));
+        // Forget failures of chapters no longer waiting; skip chapters waiting for their next try or given up on
+        DownloadFailures.Prune(missingChapters.Select(ch => ch.Key));
+        DateTime now = DateTime.UtcNow;
+        missingChapters.RemoveAll(ch => chaptersDownloading.Contains(ch.Key) || DownloadFailures.IsWaiting(ch.Key, now));
         Log.DebugFormat("{0} chapter not being downloaded", missingChapters.Count);
         
         // Maximum concurrent downloads, overall and per website

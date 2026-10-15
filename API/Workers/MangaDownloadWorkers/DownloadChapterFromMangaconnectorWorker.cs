@@ -3,6 +3,7 @@ using System.IO.Compression;
 using System.Runtime.InteropServices;
 using System.Text;
 using API.ComicInfo;
+using API.Downloads;
 using API.ExtraMetadata;
 using API.MangaConnectors;
 using API.Schema.ActionsContext;
@@ -73,7 +74,67 @@ public class DownloadChapterFromMangaconnectorWorker(MangaConnectorId<Chapter> c
         }
     }
 
+    /// <summary>Why this download failed (set before giving up on it), for <see cref="DownloadFailures"/></summary>
+    private string? _failure;
+    private bool _succeeded;
+    private MangaConnectorId<Chapter>? _chapterId;
+
     protected override async Task<BaseWorker[]> DoWorkInternal()
+    {
+        try
+        {
+            BaseWorker[] next = await Download();
+            if (_succeeded && _chapterId is not null)
+                DownloadFailures.RecordSuccess(_chapterId.ObjId);
+            else if (_failure is not null)
+                await RecordFailure(_failure);
+            return next;
+        }
+        catch (Exception e)
+        {
+            // Stopped by the user: not a failure. Otherwise (timeout, error) count it.
+            if (State != WorkerExecutionState.Cancelled)
+                await RecordFailure(e is OperationCanceledException
+                    ? $"Took longer than {Constants.WorkerTimeout.TotalMinutes:0} minutes and was stopped"
+                    : $"Error: {e.Message}");
+            Log.Error(e);
+            return [];
+        }
+    }
+
+    private async Task RecordFailure(string reason)
+    {
+        if (_chapterId?.Obj is not { } chapter)
+            return;
+        try
+        {
+            DownloadFailures.Entry entry = DownloadFailures.RecordFailure(_chapterId, chapter, reason);
+            if (!entry.GaveUp)
+            {
+                Log.Warn($"{chapter.ParentManga?.Name} Ch. {chapter.ChapterNumber} from {_chapterId.MangaConnectorName} failed " +
+                         $"(attempt {entry.Attempts} of {DownloadFailures.MaxAttempts}): {reason}. Next try {entry.NextRetryUtc:HH:mm} UTC");
+                return;
+            }
+            string? other = await DownloadFailures.UseOtherWebsite(MangaContext, _chapterId, CancellationToken.None);
+            Log.Warn($"{chapter.ParentManga?.Name} Ch. {chapter.ChapterNumber} from {_chapterId.MangaConnectorName} failed " +
+                     $"{DownloadFailures.MaxAttempts} times: {reason}. " + (other is null ? "Gave up." : $"Downloading it from {other} instead."));
+            if (other is null && DownloadFailures.NotifyWhenGivingUp)
+            {
+                await NotificationsContext.Notifications.AddAsync(new Notification(
+                    "Chapter download failed",
+                    $"{chapter.ParentManga?.Name} Ch. {chapter.ChapterNumber} ({_chapterId.MangaConnectorName}): {reason}. " +
+                    "Retry it from Activity → Download queue.",
+                    NotificationUrgency.High), CancellationToken.None);
+                await NotificationsContext.Sync(CancellationToken.None, GetType(), "Download failed");
+            }
+        }
+        catch (Exception e)
+        {
+            Log.Warn($"Couldn't record the failed download: {e.Message}");
+        }
+    }
+
+    private async Task<BaseWorker[]> Download()
     {
         Log.Debug($"Downloading chapter for MangaConnectorId {ChapterIdId}...");
         // Getting MangaConnector info
@@ -103,6 +164,7 @@ public class DownloadChapterFromMangaconnectorWorker(MangaConnectorId<Chapter> c
         Log.Debug($"Downloading chapter for MangaConnectorId {mangaConnectorId}...");
         
         Chapter chapter = mangaConnectorId.Obj;
+        _chapterId = mangaConnectorId;
         if (chapter.ParentManga.LibraryId is null)
         {
             Log.Info($"Library is not set for {chapter.ParentManga} {chapter}");
@@ -118,6 +180,7 @@ public class DownloadChapterFromMangaconnectorWorker(MangaConnectorId<Chapter> c
         if (imageUrls.Length < 1)
         {
             Log.Info($"No imageUrls for chapter {chapter}");
+            _failure = "No pages found (the website may have removed the chapter, changed its layout, or blocked Tranga)";
             return [];
         }
 
@@ -153,6 +216,7 @@ public class DownloadChapterFromMangaconnectorWorker(MangaConnectorId<Chapter> c
                 if (await mangaConnector.DownloadImage(imageUrl, CancellationToken) is not { } stream)
                 {
                     Log.Error($"Failed to download image: {imageUrl}");
+                    _failure = $"Page {imageCount + 1} of {imageUrls.Length} couldn't be downloaded";
                     if (ProgressReporter is not null)
                         await ProgressReporter.ReportFailed(this, chapter.Key, chapter.ParentMangaId,
                             chapter.ParentManga.Name, chapter.ChapterNumber);
@@ -172,6 +236,9 @@ public class DownloadChapterFromMangaconnectorWorker(MangaConnectorId<Chapter> c
             {
                 Log.Error(ex);
                 images.ForEach(i => i.Dispose());
+                if (ex is OperationCanceledException)
+                    throw;
+                _failure = $"Page {imageCount + 1} of {imageUrls.Length} couldn't be downloaded: {ex.Message}";
                 if (ProgressReporter is not null)
                     await ProgressReporter.ReportFailed(this, chapter.Key, chapter.ParentMangaId,
                         chapter.ParentManga.Name, chapter.ChapterNumber);
@@ -225,13 +292,30 @@ public class DownloadChapterFromMangaconnectorWorker(MangaConnectorId<Chapter> c
         catch (Exception ex)
         {
             Log.Error(ex);
+            if (ex is OperationCanceledException)
+                throw;
+            _failure = $"Couldn't save the chapter file: {ex.Message}";
         }
         finally
         {
             images.ForEach(i => i.Dispose());
         }
+        if (_failure is not null)
+        {
+            try
+            {
+                if (File.Exists(saveArchiveFilePath))
+                    File.Delete(saveArchiveFilePath); // don't leave a half-written archive
+            }
+            catch (Exception e)
+            {
+                Log.Warn($"Couldn't remove {saveArchiveFilePath}: {e.Message}");
+            }
+            return [];
+        }
 
         chapter.Downloaded = true;
+        _succeeded = true;
         chapter.FileName = new FileInfo(saveArchiveFilePath).Name;
         if(await MangaContext.Sync(CancellationToken, GetType(), "Downloading complete") is { success: false } chapterContextException)
             Log.Error($"Failed to save database changes: {chapterContextException.exceptionMessage}");

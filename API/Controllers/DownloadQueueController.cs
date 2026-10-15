@@ -28,8 +28,10 @@ public class DownloadQueueController(MangaContext context) : ControllerBase
     /// <param name="Downloading">Chapters downloading right now</param>
     /// <param name="NextChapter">Lowest chapter number still to download</param>
     /// <param name="Websites">Websites the chapters come from</param>
+    /// <param name="Failed">Chapters Tranga gave up on (see DownloadFailures)</param>
+    /// <param name="Retrying">Chapters that failed and wait for their next try</param>
     public record DownloadQueueEntryDto(string MangaId, string Name, int Position, int ChaptersLeft, int Downloading,
-        string? NextChapter, List<string> Websites);
+        string? NextChapter, List<string> Websites, int Failed, int Retrying);
 
     /// <summary>
     /// Returns the series waiting to download, in download order
@@ -92,7 +94,9 @@ public class DownloadQueueController(MangaContext context) : ControllerBase
                 return new DownloadQueueEntryDto(g.Key, names.GetValueOrDefault(g.Key, g.Key),
                     positions.GetValueOrDefault(g.Key, int.MaxValue), g.Select(ch => ch.ObjId).Distinct().Count(),
                     g.Count(ch => downloading.Contains(ch.Key)), next,
-                    g.Select(ch => ch.MangaConnectorName).Distinct().Order().ToList());
+                    g.Select(ch => ch.MangaConnectorName).Distinct().Order().ToList(),
+                    g.Count(ch => DownloadFailures.Get(ch.Key) is { GaveUp: true, SwitchedTo: null }),
+                    g.Count(ch => DownloadFailures.Get(ch.Key) is { GaveUp: false }));
             })
             .OrderBy(e => e.Position)
             .ToList();
