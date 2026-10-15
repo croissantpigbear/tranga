@@ -1,17 +1,18 @@
 # Tranga (fork with FMD2 websites, ComicInfo.xml, Kavita covers, download limits, ...)
 #
-# Builds the images from source. Clone both repositories next to each other:
-#   git clone -b claude https://github.com/croissantpigbear/tranga.git
-#   git clone -b claude https://github.com/croissantpigbear/tranga-website.git
+# Uses the published images (ghcr.io/croissantpigbear/...): just run  docker compose up -d
+# To build from source instead, clone both repositories next to each other:
+#   git clone -b tranga-plus https://github.com/croissantpigbear/tranga.git
+#   git clone -b tranga-plus https://github.com/croissantpigbear/tranga-website.git
 #   cd tranga && docker compose up -d --build
 # Website: http://localhost:9555   (API: http://localhost:6531/swagger)
 #
-# On a Raspberry Pi (64-bit OS) this builds ARM64 images automatically; nothing to change.
-# To update: git pull in both folders, then docker compose up -d --build
+# Works on Intel/AMD and ARM64 (Raspberry Pi 4/5 with a 64-bit OS); Docker picks the right one.
+# To update: docker compose pull && docker compose up -d   (from source: git pull in both, then up -d --build)
 
 services:
   tranga-api:
-    image: tranga-plus-api:latest
+    image: ghcr.io/croissantpigbear/tranga-api:latest
     build: .
     container_name: tranga-api
     user: "${UID:-1000}:${GID:-1000}"   # owner of downloaded files (Unraid: 99:100)
@@ -42,7 +43,7 @@ services:
         max-file: "5"
 
   tranga-website:
-    image: tranga-plus-website:latest
+    image: ghcr.io/croissantpigbear/tranga-website:latest
     build: ../tranga-website
     container_name: tranga-website
     ports:
