@@ -88,6 +88,10 @@ public class RetrieveMangaChaptersFromMangaconnectorWorker(MangaConnectorId<Mang
         // Chapters already known from another website that weren't downloaded yet (e.g. after moving to another website)
         if (mangaConnectorId.UseForDownload)
         {
+            // Chapters new to this Manga (their links are already attached to them, so they aren't in newIds)
+            foreach ((Chapter _, MangaConnectorId<Chapter> chapterId) in newChapters)
+                chapterId.UseForDownload = true;
+            // New links for Chapters already known from another website
             foreach (MangaConnectorId<Chapter> chapterId in newIds)
             {
                 if (!chapterId.Obj.Downloaded)
