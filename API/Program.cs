@@ -1,7 +1,8 @@
-using System.Reflection;
+﻿using System.Reflection;
 using API;
 using API.Hubs;
 using API.Schema.ActionsContext;
+using API.Schema.ExtraMetadataContext;
 using API.Schema.ActionsContext.Actions;
 using API.Schema.LibraryContext;
 using API.Schema.MangaContext;
@@ -28,6 +29,9 @@ string tranga =
     $"branch: {ThisAssembly.Git.Branch} commit: {ThisAssembly.Git.Commit} tag: {ThisAssembly.Git.Tag}\n\n";
 
 XmlConfigurator.ConfigureAndWatch(new FileInfo("Log4Net.config.xml"));
+// Recent log lines for the website (Activity → Logs); re-added if the config file changes
+API.Logging.MemoryLogAppender.Attach();
+LogManager.GetRepository().ConfigurationChanged += (_, _) => API.Logging.MemoryLogAppender.Attach();
 ILog log = LogManager.GetLogger("Startup");
 log.Info(tranga);
 log.Info("Logger Configured.");
@@ -113,6 +117,8 @@ builder.Services.AddDbContext<NotificationsContext>(options =>
 builder.Services.AddDbContext<LibraryContext>(options =>
     options.UseNpgsql(connectionStringBuilder.ConnectionString));
 builder.Services.AddDbContext<ActionsContext>(options =>
+    options.UseNpgsql(connectionStringBuilder.ConnectionString));
+builder.Services.AddDbContext<ExtraMetadataContext>(options =>
     options.UseNpgsql(connectionStringBuilder.ConnectionString));
 
 builder.Services.Configure<Microsoft.AspNetCore.Http.Json.JsonOptions>(options =>
@@ -221,6 +227,12 @@ try //Connect to DB and apply migrations
         if(await context.Sync(CancellationToken.None, reason: "Startup actions") is { success: false } contextException)
             log.ErrorFormat("Failed to save database changes: {0}", contextException.exceptionMessage);
     }
+
+    using (IServiceScope scope = app.Services.CreateScope())
+    {
+        ExtraMetadataContext context = scope.ServiceProvider.GetRequiredService<ExtraMetadataContext>();
+        await context.Database.MigrateAsync(CancellationToken.None);
+    }
 }
 catch (Exception e)
 {
@@ -230,6 +242,15 @@ catch (Exception e)
 
 log.Info("Starting Tranga.");
 Tranga.ServiceProvider = app.Services;
+// Websites from uploaded FMD2 modules must be known before the start-up clean-up removes links to unknown sites
+try
+{
+    API.LuaModules.LuaModuleStore.LoadAll();
+}
+catch (Exception e)
+{
+    log.Error("Loading FMD2 modules failed", e);
+}
 Tranga.StartupTasks();
 Tranga.AddDefaultWorkers();
 

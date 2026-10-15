@@ -40,6 +40,8 @@
         <PackageReference Include="Swashbuckle.AspNetCore.Newtonsoft" Version="10.2.3" />
         <PackageReference Include="PuppeteerSharp" Version="25.8.0" />
         <PackageReference Include="System.Drawing.Common" Version="10.0.11" />
+        <PackageReference Include="NLua" Version="1.7.5" />
+        <PackageReference Include="XPath2" Version="1.1.5" />
     </ItemGroup>
 
     <ItemGroup>
@@ -48,6 +50,10 @@
 
     <ItemGroup>
       <None Include="Log4Net.config.xml" CopyToOutputDirectory="Always" CopyToPublishDirectory="Always" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <EmbeddedResource Include="LuaModules/fmd_prelude.lua" LogicalName="fmd_prelude.lua" />
     </ItemGroup>
 
     <PropertyGroup>

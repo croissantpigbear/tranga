@@ -2,9 +2,12 @@ using System.Diagnostics.CodeAnalysis;
 using System.IO.Compression;
 using System.Runtime.InteropServices;
 using System.Text;
+using API.ComicInfo;
+using API.ExtraMetadata;
 using API.MangaConnectors;
 using API.Schema.ActionsContext;
 using API.Schema.ActionsContext.Actions;
+using API.Schema.ExtraMetadataContext;
 using API.Schema.MangaContext;
 using API.Schema.NotificationsContext;
 using API.Workers.PeriodicWorkers;
@@ -27,6 +30,8 @@ public class DownloadChapterFromMangaconnectorWorker(MangaConnectorId<Chapter> c
     : BaseWorkerWithContexts(dependsOn)
 {
     public readonly string ChapterIdId = chId.Key;
+    /// <summary>Website the chapter is downloaded from (for the per-website download limit)</summary>
+    public readonly string MangaConnectorName = chId.MangaConnectorName;
 
     [SuppressMessage("ReSharper", "InconsistentNaming")]
     private MangaContext MangaContext = null!;
@@ -34,6 +39,8 @@ public class DownloadChapterFromMangaconnectorWorker(MangaConnectorId<Chapter> c
     private ActionsContext ActionsContext = null!;
     [SuppressMessage("ReSharper", "InconsistentNaming")]
     private NotificationsContext NotificationsContext = null!;
+    [SuppressMessage("ReSharper", "InconsistentNaming")]
+    private ExtraMetadataContext ExtraMetadataContext = null!;
     private DownloadProgressReporter? ProgressReporter;
 
     protected override void SetContexts(IServiceScope serviceScope)
@@ -41,9 +48,31 @@ public class DownloadChapterFromMangaconnectorWorker(MangaConnectorId<Chapter> c
         MangaContext = GetContext<MangaContext>(serviceScope);
         ActionsContext = GetContext<ActionsContext>(serviceScope);
         NotificationsContext = GetContext<NotificationsContext>(serviceScope);
+        ExtraMetadataContext = GetContext<ExtraMetadataContext>(serviceScope);
         ProgressReporter = serviceScope.ServiceProvider.GetService<DownloadProgressReporter>();
     }
     
+    /// <summary>
+    /// Full ComicInfo.xml (series, credits, genres, age rating… from the stored extra details); falls back to Tranga's
+    /// basic one if anything goes wrong, so a download never fails because of metadata.
+    /// </summary>
+    private async Task<string> BuildComicInfo(Chapter chapter, int pageCount, string sourceName)
+    {
+        try
+        {
+            ExtraMetadataData? extra = await ExtraMetadataContext.Entries.AsNoTracking()
+                .Where(e => e.MangaId == chapter.ParentMangaId)
+                .Select(e => e.Data)
+                .FirstOrDefaultAsync(CancellationToken) is { } json ? ExtraMetadataStore.Parse(json) : null;
+            return ComicInfoBuilder.Build(chapter, chapter.ParentManga, extra, pageCount, sourceName);
+        }
+        catch (Exception e)
+        {
+            Log.Warn($"Full ComicInfo.xml failed, writing the basic one: {e.Message}");
+            return chapter.GetComicInfoXmlString();
+        }
+    }
+
     protected override async Task<BaseWorker[]> DoWorkInternal()
     {
         Log.Debug($"Downloading chapter for MangaConnectorId {ChapterIdId}...");
@@ -176,7 +205,7 @@ public class DownloadChapterFromMangaconnectorWorker(MangaConnectorId<Chapter> c
             {
                 Log.Debug("Writing ComicInfo.xml");
                 Stream comicStream = archive.CreateEntry("ComicInfo.xml").Open();
-                string comicInfo = chapter.GetComicInfoXmlString();
+                string comicInfo = await BuildComicInfo(chapter, images.Count, mangaConnectorId.MangaConnectorName);
                 await comicStream.WriteAsync(Encoding.UTF8.GetBytes(comicInfo), CancellationToken);
                 await comicStream.DisposeAsync();
             }

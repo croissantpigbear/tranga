@@ -1,4 +1,4 @@
-using System.ComponentModel.DataAnnotations;
+﻿using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 using System.Runtime.InteropServices;
 using API.Workers;
@@ -87,6 +87,11 @@ public class Manga : Identifiable
         this.OriginalLanguage = originalLanguage;
     }
     
+    /// <summary>
+    /// Sets the folder name of this Manga inside its library (does not move anything on disk).
+    /// </summary>
+    internal void SetDirectoryName(string directoryName) => this.DirectoryName = directoryName;
+
     /// <exception cref="DirectoryNotFoundException">Library not loaded</exception>
     private string EnsureDirectoryExists()
     {

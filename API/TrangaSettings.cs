@@ -44,6 +44,11 @@ public struct TrangaSettings
     
     public int MaxConcurrentDownloads { get; set; } = (int)Math.Max(Environment.ProcessorCount * 0.75, 1); // Minimum of 1 Tasks, maximum of 0.75 per Core
 
+    /// <summary>
+    /// At most this many chapters download at the same time from one website (MangaDex, WeebCentral, …), so no site is hammered
+    /// </summary>
+    public int MaxConcurrentDownloadsPerConnector { get; set; } = 2;
+
     public int MaxConcurrentWorkers { get; set; } = Math.Max(Environment.ProcessorCount, 4); // Minimum of 4 Tasks, maximum of 1 per Core
 
     public LibraryRefreshSetting LibraryRefreshSetting { get; set; } = LibraryRefreshSetting.AfterMangaFinished;
@@ -106,6 +111,12 @@ public struct TrangaSettings
     public void SetMaxConcurrentDownloads(int value)
     {
         this.MaxConcurrentDownloads = value;
+        Save();
+    }
+
+    public void SetMaxConcurrentDownloadsPerConnector(int value)
+    {
+        this.MaxConcurrentDownloadsPerConnector = value;
         Save();
     }
 

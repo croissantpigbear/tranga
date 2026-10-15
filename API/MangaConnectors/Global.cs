@@ -34,10 +34,29 @@ public class Global : MangaConnector
         return ret;
     }
 
+    /// <summary>
+    /// Tries every enabled website that handles <paramref name="url"/>: websites added from FMD2 modules first (the user
+    /// uploaded them on purpose, often because the built-in one stopped working), then the built-in ones.
+    /// </summary>
     public override (Manga, MangaConnectorId<Manga>)? GetMangaFromUrl(string url)
     {
-        MangaConnector? mc = Tranga.MangaConnectors.FirstOrDefault(c => c.UrlMatchesConnector(url));
-        return mc?.GetMangaFromUrl(url) ?? null;
+        IEnumerable<MangaConnector> candidates = Tranga.MangaConnectors
+            .Where(c => c.Name != "Global" && c.Enabled && c.UrlMatchesConnector(url))
+            .OrderBy(c => c is LuaMangaConnector ? 0 : 1);
+        foreach (MangaConnector mc in candidates)
+        {
+            try
+            {
+                if (mc.GetMangaFromUrl(url) is { } result)
+                    return result;
+                Log.Debug($"{mc.Name} couldn't read {url}, trying the next website that handles it");
+            }
+            catch (Exception e)
+            {
+                Log.Debug($"{mc.Name} failed on {url}: {e.Message}");
+            }
+        }
+        return null;
     }
 
     public override (Manga, MangaConnectorId<Manga>)? GetMangaFromId(string mangaIdOnSite)

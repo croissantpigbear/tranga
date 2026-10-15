@@ -29,6 +29,8 @@ public class CheckForNewChaptersWorker(TimeSpan? interval = null, IEnumerable<Ba
             .Include(id => id.Obj)
             .Where(id => id.UseForDownload)
             .ToListAsync(CancellationToken);
+        // Links to websites Tranga no longer has (removed built-ins, deleted modules) can't be checked
+        connectorIdsManga = connectorIdsManga.Where(id => Tranga.TryGetMangaConnector(id.MangaConnectorName, out _)).ToList();
         Log.DebugFormat("Creating {0} update jobs...", connectorIdsManga.Count);
 
         List<BaseWorker> newWorkers = connectorIdsManga.Select(id => new RetrieveMangaChaptersFromMangaconnectorWorker(id, Tranga.Settings.DownloadLanguage))

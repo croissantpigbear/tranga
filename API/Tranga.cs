@@ -20,8 +20,19 @@ public static class Tranga
     
     private static readonly ILog Log = LogManager.GetLogger(typeof(Tranga));
     internal static readonly MetadataFetcher[] MetadataFetchers = [new MyAnimeList()];
-    internal static readonly MangaConnector[] MangaConnectors = [new Global(), new AsuraComic(), new MangaDex(), new Mangaworld(), new WeebCentral()];
-    internal static readonly TrangaSettings Settings = TrangaSettings.Load();
+    internal static readonly MangaConnector[] BuiltInMangaConnectors = [new Global(), new MangaDex()];
+
+    /// <summary>
+    /// Built-in websites that were removed (outdated; FMD2 modules cover these sites now). Their classes stay because the
+    /// database model knows them. Manga linked to them are kept and moved to an uploaded module for the same site when
+    /// there is one (<see cref="RelinkRetiredWebsitesWorker"/>).
+    /// </summary>
+    internal static readonly string[] RetiredMangaConnectorNames = ["AsuraComic", "Mangaworld", "WeebCentral"];
+    /// <summary>Built-in websites plus those added by uploaded FMD2 Lua modules</summary>
+    internal static MangaConnector[] MangaConnectors => [.. BuiltInMangaConnectors, .. API.LuaModules.LuaModuleStore.Connectors];
+    // Not readonly: TrangaSettings is a struct, and its Set... methods would otherwise only change a temporary copy
+    // (saved to settings.json, but not used until the next restart)
+    internal static TrangaSettings Settings = TrangaSettings.Load();
     
     // ReSharper disable MemberCanBePrivate.Global
     internal static readonly UpdateMetadataWorker UpdateMetadataWorker = new ();
@@ -33,6 +44,8 @@ public static class Tranga
     internal static readonly RemoveOldNotificationsWorker RemoveOldNotificationsWorker = new();
     internal static readonly UpdateCoversWorker UpdateCoversWorker = new();
     internal static readonly CleanupMangaconnectorIdsWithoutConnector CleanupMangaconnectorIdsWithoutConnector = new();
+    internal static readonly FillExtraMetadataWorker FillExtraMetadataWorker = new();
+    internal static readonly SyncKavitaCoversWorker SyncKavitaCoversWorker = new();
     // ReSharper restore MemberCanBePrivate.Global
 
     internal static readonly RateLimitHandler RateLimitHandler = new();
@@ -50,6 +63,8 @@ public static class Tranga
         while (RunningWorkers.Any(w => w.Key.State < WorkerExecutionState.Completed))
             Thread.Sleep(1000);
         Log.Info("Start complete!");
+        // After startup (it may read websites): move manga off removed built-in websites
+        RelinkRetiredWebsitesWorker.Queue();
     }
 
     internal static void AddDefaultWorkers()
@@ -59,6 +74,8 @@ public static class Tranga
         AddWorker(StartNewChapterDownloadsWorker);
         AddWorker(RemoveOldNotificationsWorker);
         AddWorker(UpdateCoversWorker);
+        AddWorker(FillExtraMetadataWorker);
+        AddWorker(SyncKavitaCoversWorker);
         
         if(Constants.UpdateChaptersDownloadedBeforeStarting)
             AddWorker(UpdateChaptersDownloadedWorker);
@@ -255,6 +272,15 @@ public static class Tranga
             });
             addManga.Authors = mergedAuthors.ToList();
             
+            // Name the series folder according to the folder naming scheme (default: the title, as before)
+            try
+            {
+                addManga.SetDirectoryName(API.Naming.NamingFormatter.SeriesFolderName(API.Naming.SeriesNamingSettings.SeriesFolderScheme, addManga));
+            }
+            catch (Exception e)
+            {
+                Log.Warn("Could not apply series folder naming scheme, using the title.", e);
+            }
             context.Mangas.Add(addManga);
             result = (addManga, addMcId);
         }

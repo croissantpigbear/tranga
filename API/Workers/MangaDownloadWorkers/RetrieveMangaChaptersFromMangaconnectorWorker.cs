@@ -18,6 +18,11 @@ public class RetrieveMangaChaptersFromMangaconnectorWorker(MangaConnectorId<Mang
 {
     private readonly string _mangaConnectorIdId = mcId.Key;
 
+    /// <summary>
+    /// Key of the <see cref="MangaConnectorId{T}"/> this worker retrieves Chapters for
+    /// </summary>
+    public string MangaConnectorIdId => _mangaConnectorIdId;
+
     [SuppressMessage("ReSharper", "InconsistentNaming")]
     private MangaContext MangaContext = null!;
     [SuppressMessage("ReSharper", "InconsistentNaming")]
@@ -79,12 +84,14 @@ public class RetrieveMangaChaptersFromMangaconnectorWorker(MangaConnectorId<Mang
         // Add new ChapterIds to Database
         MangaContext.MangaConnectorToChapter.AddRange(newIds);
 
-        // If Manga is marked for Download from Connector, mark the new Chapters as UseForDownload
+        // If Manga is marked for Download from Connector, mark its new chapter links as UseForDownload: new Chapters, and
+        // Chapters already known from another website that weren't downloaded yet (e.g. after moving to another website)
         if (mangaConnectorId.UseForDownload)
         {
-            foreach ((Chapter _, MangaConnectorId<Chapter> chapterId) in newChapters)
+            foreach (MangaConnectorId<Chapter> chapterId in newIds)
             {
-                chapterId.UseForDownload = mangaConnectorId.UseForDownload;
+                if (!chapterId.Obj.Downloaded)
+                    chapterId.UseForDownload = true;
             }
         }
 

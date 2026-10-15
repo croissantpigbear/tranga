@@ -17,7 +17,11 @@ public class CleanupMangaconnectorIdsWithoutConnector : BaseWorkerWithContexts
     protected override async Task<BaseWorker[]> DoWorkInternal()
     {
         Log.Info("Cleaning up old connector-data...");
-        string[] connectorNames = Tranga.MangaConnectors.Select(c => c.Name).ToArray();
+        // Sites from uploaded FMD2 modules count as known even if a module failed to load this time
+        string[] connectorNames = Tranga.MangaConnectors.Select(c => c.Name)
+            .Concat(API.LuaModules.LuaModuleStore.KnownSiteNames())
+            .Concat(Tranga.RetiredMangaConnectorNames) // kept so they can be moved to an uploaded module
+            .Distinct().ToArray();
         int deletedChapterIds = await MangaContext.MangaConnectorToChapter.Where(chId => connectorNames.All(n => n != chId.MangaConnectorName)).ExecuteDeleteAsync(CancellationToken);
         Log.InfoFormat("Deleted {0} chapterIds.", deletedChapterIds);
         

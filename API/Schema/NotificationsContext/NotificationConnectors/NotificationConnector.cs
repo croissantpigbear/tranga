@@ -27,7 +27,8 @@ public class NotificationConnector(string name, string url, Dictionary<string, s
     
     [JsonIgnore] protected ILog Log = LogManager.GetLogger(name);
 
-    public void SendNotification(string title, string notificationText)
+    /// <returns>HTTP status of the notification service's response</returns>
+    public System.Net.HttpStatusCode SendNotification(string title, string notificationText)
     {
         Log.InfoFormat("Sending notification: {0} - {1}", title, notificationText);
         string formattedUrl = FormatStr(Url, title, notificationText);
@@ -44,6 +45,7 @@ public class NotificationConnector(string name, string url, Dictionary<string, s
 
         HttpResponseMessage response = Client.Send(request);
         Log.DebugFormat("Response status code: {0} {1}", response.StatusCode, response.Content.ReadAsStringAsync().Result);
+        return response.StatusCode;
     }
 
     private static string FormatStr(string str, string title, string text)

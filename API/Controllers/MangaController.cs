@@ -286,8 +286,53 @@ public class MangaController(MangaContext context, ActionsContext actionsContext
         DownloadCoverFromMangaconnectorWorker downloadCover = new(mcId);
         RetrieveMangaChaptersFromMangaconnectorWorker retrieveChapters = new(mcId, Tranga.Settings.DownloadLanguage);
         Tranga.AddWorkers([downloadCover, retrieveChapters]);
+
+        // Store extra details (MangaUpdates, MangaDex content rating) once, when a Manga joins the library
+        if (IsRequested && !Tranga.GetKnownWorkers().OfType<FetchExtraMetadataWorker>().Any(w => w.MangaId == manga.Key))
+            Tranga.AddWorker(new FetchExtraMetadataWorker(manga.Key));
         
         return TypedResults.Ok();
+    }
+
+    /// <summary>
+    /// Check the <see cref="API.MangaConnectors.MangaConnector"/>s a <see cref="Manga"/> is downloaded from for new <see cref="Chapter"/>s now,
+    /// instead of waiting for the next periodic check, and refresh its cover.
+    /// Which <see cref="Chapter"/>s are marked for download is not changed; newly found <see cref="Chapter"/>s are marked like in the periodic check.
+    /// </summary>
+    /// <param name="MangaId"><see cref="Manga"/>.Key</param>
+    /// <response code="202">Number of <see cref="API.MangaConnectors.MangaConnector"/>s a check was queued for (checks already queued or running are not added again)</response>
+    /// <response code="404"><see cref="Manga"/> with <paramref name="MangaId"/> not found</response>
+    /// <response code="412"><see cref="Manga"/> is not marked for download from any <see cref="API.MangaConnectors.MangaConnector"/></response>
+    [HttpPost("{MangaId}/Refresh")]
+    [ProducesResponseType<int>(Status202Accepted, "application/json")]
+    [ProducesResponseType<string>(Status404NotFound, "text/plain")]
+    [ProducesResponseType(Status412PreconditionFailed)]
+    public async Task<Results<Accepted<int>, NotFound<string>, StatusCodeHttpResult>> RefreshManga(string MangaId)
+    {
+        if (await context.Mangas
+                .Include(m => m.MangaConnectorIds)
+                .FirstOrDefaultAsync(m => m.Key == MangaId, HttpContext.RequestAborted) is not { } manga)
+            return TypedResults.NotFound(nameof(MangaId));
+
+        List<Schema.MangaContext.MangaConnectorId<Schema.MangaContext.Manga>> downloadFrom =
+            manga.MangaConnectorIds.Where(id => id.UseForDownload).ToList();
+        if (downloadFrom.Count == 0)
+            return TypedResults.StatusCode(Status412PreconditionFailed);
+
+        HashSet<string> alreadyQueued = Tranga.GetKnownWorkers()
+            .OfType<RetrieveMangaChaptersFromMangaconnectorWorker>()
+            .Select(w => w.MangaConnectorIdId)
+            .ToHashSet();
+
+        List<BaseWorker> workers = [];
+        foreach (Schema.MangaContext.MangaConnectorId<Schema.MangaContext.Manga> mcId in downloadFrom.Where(id => !alreadyQueued.Contains(id.Key)))
+        {
+            workers.Add(new DownloadCoverFromMangaconnectorWorker(mcId));
+            workers.Add(new RetrieveMangaChaptersFromMangaconnectorWorker(mcId, Tranga.Settings.DownloadLanguage));
+        }
+        Tranga.AddWorkers(workers);
+
+        return TypedResults.Accepted((string?)null, workers.Count / 2);
     }
     
     /// <summary>
