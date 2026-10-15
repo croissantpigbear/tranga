@@ -88,6 +88,23 @@ public class Manga : Identifiable
     }
     
     /// <summary>
+    /// A copy of this (not yet saved) Manga with another key and name, for a different series that has exactly the
+    /// same name as one already in the database (the key is made from the name, so it would clash).
+    /// </summary>
+    internal Manga CopyAs(string key, string name) =>
+        new(key, name, Description, CoverUrl, ReleaseStatus, name.CleanNameForWindows(), IgnoreChaptersBefore, LibraryId, Year, OriginalLanguage)
+        {
+            Authors = Authors,
+            MangaTags = MangaTags,
+            Links = Links,
+            AltTitles = AltTitles,
+            Library = Library,
+            CoverFileNameInCache = CoverFileNameInCache,
+            Chapters = [],
+            MangaConnectorIds = []
+        };
+
+    /// <summary>
     /// Sets the folder name of this Manga inside its library (does not move anything on disk).
     /// </summary>
     internal void SetDirectoryName(string directoryName) => this.DirectoryName = directoryName;

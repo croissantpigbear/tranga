@@ -215,12 +215,26 @@ public static class Tranga
     internal static async Task<(Manga manga, MangaConnectorId<Manga> id)?> AddMangaToContext(this MangaContext context, (Manga, MangaConnectorId<Manga>) addManga, CancellationToken token) =>
         await AddMangaToContext(context, addManga.Item1, addManga.Item2, token);
 
+    /// <summary>"Destiny Lovers (2019)" if the year tells it apart, otherwise "Destiny Lovers (2)", "(3)", …</summary>
+    private static async Task<string> DistinctName(MangaContext context, Manga manga, CancellationToken token)
+    {
+        string baseName = manga.Name.Length > 500 ? manga.Name[..500] : manga.Name;
+        List<string> taken = await context.Mangas.Where(m => m.Name.StartsWith(baseName)).Select(m => m.Name).ToListAsync(token);
+        if (manga.Year is { } year && !taken.Contains($"{baseName} ({year})")
+            && !await context.Mangas.AnyAsync(m => m.Name == baseName && m.Year == year, token))
+            return $"{baseName} ({year})";
+        int n = 2;
+        while (taken.Contains($"{baseName} ({n})"))
+            n++;
+        return $"{baseName} ({n})";
+    }
+
     internal static async Task<(Manga manga, MangaConnectorId<Manga> id)?> AddMangaToContext(this MangaContext context, Manga addManga, MangaConnectorId<Manga> addMcId, CancellationToken token)
     {
         context.ChangeTracker.Clear();
         Log.DebugFormat("Adding Manga to Context: {0}", addManga);
         (Manga, MangaConnectorId<Manga>)? result;
-        if (await context.FindMangaLike(addManga, token) is { } mangaId)
+        if (await context.FindMangaLike(addManga, token, addMcId) is { } mangaId)
         {
             Manga manga = await context.MangaIncludeAll().FirstAsync(m => m.Key == mangaId, token);
             Log.DebugFormat("Merging with existing Manga: {0}", manga);
@@ -258,6 +272,20 @@ public static class Tranga
         else
         {
             Log.Debug("Manga does not exist yet.");
+            if (await context.Mangas.AnyAsync(m => m.Key == addManga.Key, token))
+            {
+                // A different series with exactly the same name as one already here (e.g. two "Destiny Lovers" with
+                // different stories): give it its own key, and a name that tells them apart in the library, folders
+                // and readers (Kavita groups series by name)
+                string name = await DistinctName(context, addManga, token);
+                string key = TokenGen.CreateToken(typeof(Manga), addManga.Name, addMcId.MangaConnectorName, addMcId.IdOnConnectorSite);
+                Log.Info($"\"{addManga.Name}\" from {addMcId.MangaConnectorName} is a different series with the same name; adding it as \"{name}\"");
+                Manga renamed = addManga.CopyAs(key, name);
+                MangaConnectorId<Manga> renamedId = new(renamed, addMcId.MangaConnectorName, addMcId.IdOnConnectorSite, addMcId.WebsiteUrl, addMcId.UseForDownload);
+                renamed.MangaConnectorIds.Add(renamedId);
+                addManga = renamed;
+                addMcId = renamedId;
+            }
             IEnumerable<MangaTag> mergedTags = addManga.MangaTags.Select(mt =>
             {
                 MangaTag? inDb = context.Tags.Find(mt.Tag);
@@ -281,6 +309,12 @@ public static class Tranga
             {
                 Log.Warn("Could not apply series folder naming scheme, using the title.", e);
             }
+            // Never share a folder with another series (their chapter files would mix)
+            string folder = addManga.DirectoryName;
+            List<string> taken = await context.Mangas.Where(m => m.DirectoryName.ToLower().StartsWith(folder.ToLower()))
+                .Select(m => m.DirectoryName.ToLower()).ToListAsync(token);
+            for (int n = 2; taken.Contains(addManga.DirectoryName.ToLower()); n++)
+                addManga.SetDirectoryName($"{folder} ({n})");
             context.Mangas.Add(addManga);
             result = (addManga, addMcId);
         }
