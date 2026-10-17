@@ -67,6 +67,76 @@ public class ChapterFilesController(MangaContext context) : ControllerBase
         return TypedResults.Ok(new MangaFilesDto(files.Sum(f => f.SizeBytes), files));
     }
 
+    /// <summary>A file in a series' folder</summary>
+    /// <param name="FileName">File name</param>
+    /// <param name="SizeBytes">Size</param>
+    /// <param name="ModifiedUtc">Last written</param>
+    /// <param name="ChapterId">Chapter.Key of the chapter this file is (null: Tranga doesn't know this file)</param>
+    /// <param name="ChapterNumber">That chapter's number</param>
+    /// <param name="IsChapterArchive">A .cbz/.zip/… (false for covers, ComicInfo, other files)</param>
+    public record SeriesFolderFileDto(string FileName, long SizeBytes, DateTime ModifiedUtc, string? ChapterId, string? ChapterNumber, bool IsChapterArchive);
+
+    /// <summary>Where a series is saved</summary>
+    /// <param name="LibraryName">Library (download folder) name; null if no library is chosen</param>
+    /// <param name="LibraryPath">Library folder, as Tranga sees it (inside the container, e.g. /Manga)</param>
+    /// <param name="FolderName">The series' folder name in the library</param>
+    /// <param name="FullPath">Library path + folder name; null if no library is chosen</param>
+    /// <param name="Exists">The folder exists on disk</param>
+    /// <param name="Files">Files in the folder, chapters in order first</param>
+    public record SeriesFolderDto(string? LibraryName, string? LibraryPath, string FolderName, string? FullPath, bool Exists, List<SeriesFolderFileDto> Files);
+
+    /// <summary>
+    /// Returns where a Manga is saved (library, folder name, full path) and the files in its folder
+    /// </summary>
+    /// <param name="MangaId">Manga.Key</param>
+    /// <response code="200"></response>
+    /// <response code="404">Manga not found</response>
+    [HttpGet("Manga/{MangaId}/Folder")]
+    [ProducesResponseType<SeriesFolderDto>(Status200OK, "application/json")]
+    [ProducesResponseType<string>(Status404NotFound, "text/plain")]
+    public async Task<Results<Ok<SeriesFolderDto>, NotFound<string>>> GetMangaFolder(string MangaId)
+    {
+        if (await context.Mangas
+                .Include(m => m.Library)
+                .Include(m => m.Chapters)
+                .AsNoTracking()
+                .FirstOrDefaultAsync(m => m.Key == MangaId, HttpContext.RequestAborted) is not { } manga)
+            return TypedResults.NotFound(nameof(MangaId));
+
+        if (manga.Library is null)
+            return TypedResults.Ok(new SeriesFolderDto(null, null, manga.DirectoryName, null, false, []));
+
+        // Don't create the folder just by looking at it (FullDirectoryPath would)
+        string folder = Path.Join(manga.Library.BasePath, manga.DirectoryName);
+        bool exists = Directory.Exists(folder);
+        List<SeriesFolderFileDto> files = [];
+        if (exists)
+        {
+            Dictionary<string, Chapter> byFile = new(StringComparer.Ordinal);
+            foreach (Chapter c in manga.Chapters.Where(c => c.Downloaded))
+            {
+                string? name = c.FileName;
+                if (name is null)
+                    try { name = c.GetArchiveFileName(); } catch (Exception) { /* naming needs details not loaded */ }
+                if (name is not null)
+                    byFile.TryAdd(name, c);
+            }
+            foreach (string path in Directory.EnumerateFiles(folder))
+            {
+                FileInfo info = new(path);
+                Chapter? chapter = byFile.GetValueOrDefault(info.Name);
+                files.Add(new SeriesFolderFileDto(info.Name, info.Length, info.LastWriteTimeUtc, chapter?.Key, chapter?.ChapterNumber,
+                    API.Imports.LibraryImport.IsChapterFile(info.Name)));
+            }
+            files = files
+                .OrderBy(f => f.ChapterNumber is null ? 1 : 0)
+                .ThenBy(f => f.ChapterNumber is null ? 0 : Chapter.NumberValue(f.ChapterNumber))
+                .ThenBy(f => f.FileName, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+        return TypedResults.Ok(new SeriesFolderDto(manga.Library.LibraryName, manga.Library.BasePath, manga.DirectoryName, folder, exists, files));
+    }
+
     /// <summary>
     /// Deletes a downloaded chapter's file from disk and stops it from being downloaded again
     /// (the chapter stays listed and can be re-enabled for download).
