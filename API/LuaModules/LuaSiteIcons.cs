@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Text.RegularExpressions;
+using API.MangaConnectors;
 using HtmlAgilityPack;
 using log4net;
 
