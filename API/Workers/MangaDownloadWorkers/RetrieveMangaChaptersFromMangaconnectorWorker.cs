@@ -66,6 +66,10 @@ public class RetrieveMangaChaptersFromMangaconnectorWorker(MangaConnectorId<Mang
             manga.Chapters.All(c => c.Key != ch.chapter.Key)).ToList();
         Log.DebugFormat("Got {0} new chapters.", newChapters.Count);
 
+        // New chapters of a series Tranga already had are releases (for the release calendar)
+        if (mangaConnectorId.UseForDownload && manga.Chapters.Count > 0)
+            API.Downloads.ReleaseLog.Record(manga.Key, newChapters.Select(ch => ch.chapter.Key).ToList());
+
         // Add Chapters to Manga
         manga.Chapters = manga.Chapters.Union(newChapters.Select(ch => ch.chapter)).ToList();
         
@@ -99,6 +103,13 @@ public class RetrieveMangaChaptersFromMangaconnectorWorker(MangaConnectorId<Mang
                 if (!chapterId.Obj.Downloaded && !Chapter.IsBeforeStart(chapterId.Obj.ChapterNumber, manga.IgnoreChaptersBefore))
                     chapterId.UseForDownload = true;
             }
+        }
+
+        // An imported folder: chapters whose files are already there count as downloaded
+        if (API.Imports.LibraryImport.IsPending(manga.Key))
+        {
+            await MangaContext.Entry(manga).Reference(m => m.Library).LoadAsync(CancellationToken);
+            API.Imports.LibraryImport.MatchExisting(manga, manga.Chapters);
         }
 
         if(await MangaContext.Sync(CancellationToken, GetType(), "Chapters retrieved") is { success: false } mangaContextException)
