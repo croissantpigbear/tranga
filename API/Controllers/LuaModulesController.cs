@@ -417,4 +417,23 @@ public class LuaModulesController : ControllerBase
         LuaUpdateChecker.UpdateResult r = LuaUpdateChecker.Undo(kind, FileName);
         return TypedResults.Ok(new LuaUpdateResultDto(r.FileName, r.Ok, r.Message));
     }
+
+    /// <summary>
+    /// A website's icon (fetched from the site once, then kept for 30 days)
+    /// </summary>
+    /// <param name="SiteName">Website name in Tranga</param>
+    /// <response code="200">The image</response>
+    /// <response code="404">No such website, or it has no icon Tranga can get</response>
+    [HttpGet("Sites/{SiteName}/Icon")]
+    [ProducesResponseType(Status200OK)]
+    [ProducesResponseType<string>(Status404NotFound, "text/plain")]
+    public async Task<Results<PhysicalFileHttpResult, NotFound<string>>> SiteIcon(string SiteName)
+    {
+        if (LuaModuleStore.Connectors.FirstOrDefault(c => c.Name.Equals(SiteName, StringComparison.OrdinalIgnoreCase)) is not { } site)
+            return TypedResults.NotFound(nameof(SiteName));
+        if (await LuaSiteIcons.Get(site, HttpContext.RequestAborted) is not { } icon)
+            return TypedResults.NotFound("No icon");
+        Response.Headers.CacheControl = "public, max-age=86400";
+        return TypedResults.PhysicalFile(icon.Path, icon.ContentType);
+    }
 }

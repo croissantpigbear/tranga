@@ -29,7 +29,7 @@ public class LuaMangaConnector : MangaConnector
     private static readonly ConcurrentDictionary<string, Dictionary<string, string>> ImageHeaders = new();
 
     internal LuaMangaConnector(string connectorName, string fileName, LuaModuleMeta meta)
-        : base(connectorName, [LanguageOf(meta.Category)], BaseUrisOf(meta.RootUrl), IconOf(meta.RootUrl))
+        : base(connectorName, [LanguageOf(meta.Category)], BaseUrisOf(meta.RootUrl), LuaSiteIcons.UrlFor(connectorName))
     {
         this.downloadClient = new HttpDownloadClient();
         FileName = fileName;
@@ -49,7 +49,6 @@ public class LuaMangaConnector : MangaConnector
         return [Regex.Escape(host), Regex.Escape("www." + host)];
     }
 
-    private static string IconOf(string rootUrl) => $"{rootUrl.TrimEnd('/')}/favicon.ico";
 
     /// <summary>FMD2 category ("English", "Spanish-Scanlation", "Raw") → language code</summary>
     internal static string LanguageOf(string category)
