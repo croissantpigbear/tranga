@@ -142,10 +142,35 @@ public class ChaptersController(MangaContext context) : ControllerBase
     [ProducesResponseType<string>(Status500InternalServerError, "text/plain")]
     public async Task<Results<Ok, NotFound<string>, InternalServerError<string>>> IgnoreChaptersBefore(string MangaId, [FromBody]float chapterThreshold)
     {
-        if (await context.Mangas.FirstOrDefaultAsync(m => m.Key == MangaId, HttpContext.RequestAborted) is not { } manga)
+        if (await context.Mangas
+                .Include(m => m.MangaConnectorIds)
+                .Include(m => m.Chapters)
+                .ThenInclude(c => c.MangaConnectorIds)
+                .FirstOrDefaultAsync(m => m.Key == MangaId, HttpContext.RequestAborted) is not { } manga)
             return TypedResults.NotFound(nameof(MangaId));
-        
+        if (float.IsNaN(chapterThreshold) || chapterThreshold < 0)
+            chapterThreshold = 0;
+
+        float oldThreshold = manga.IgnoreChaptersBefore;
         manga.IgnoreChaptersBefore = chapterThreshold;
+        // Chapters not downloaded yet follow the new start: earlier ones are unselected, and ones the old start skipped
+        // are selected on the websites the series downloads from. Downloaded files are kept.
+        HashSet<string> downloadingFrom = manga.MangaConnectorIds.Where(id => id.UseForDownload)
+            .Select(id => id.MangaConnectorName).ToHashSet();
+        foreach (Schema.MangaContext.Chapter chapter in manga.Chapters.Where(c => !c.Downloaded))
+        {
+            if (Schema.MangaContext.Chapter.IsBeforeStart(chapter.ChapterNumber, chapterThreshold))
+            {
+                foreach (Schema.MangaContext.MangaConnectorId<Schema.MangaContext.Chapter> id in chapter.MangaConnectorIds)
+                    id.UseForDownload = false;
+            }
+            else if (Schema.MangaContext.Chapter.IsBeforeStart(chapter.ChapterNumber, oldThreshold))
+            {
+                foreach (Schema.MangaContext.MangaConnectorId<Schema.MangaContext.Chapter> id in chapter.MangaConnectorIds
+                             .Where(id => downloadingFrom.Contains(id.MangaConnectorName)))
+                    id.UseForDownload = true;
+            }
+        }
         if(await context.Sync(HttpContext.RequestAborted, GetType(), System.Reflection.MethodBase.GetCurrentMethod()?.Name) is { success: false } result)
             return TypedResults.InternalServerError(result.exceptionMessage);
 

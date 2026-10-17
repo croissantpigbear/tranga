@@ -217,6 +217,17 @@ public class Chapter : Identifiable, IComparable<Chapter>
         }
     }
 
+    /// <summary>A chapter number as a number for comparing with a threshold: "10" = 10, "10.5" = 10.5, "10.5.1" = 10.5</summary>
+    internal static double NumberValue(string chapterNumber)
+    {
+        string[] parts = chapterNumber.Split('.');
+        string text = parts.Length > 1 ? $"{parts[0]}.{parts[1]}" : parts[0];
+        return double.TryParse(text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double v) ? v : 0;
+    }
+
+    /// <summary>True if this chapter comes before the series' "start from chapter" (so it isn't downloaded automatically)</summary>
+    internal static bool IsBeforeStart(string chapterNumber, float startFrom) => startFrom > 0 && NumberValue(chapterNumber) < startFrom;
+
     public class ChapterComparer : IComparer<Chapter>
     {
         public int Compare(Chapter? x, Chapter? y)

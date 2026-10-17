@@ -45,7 +45,13 @@ public class StartNewChapterDownloadsWorker(TimeSpan? interval = null, IEnumerab
         // Forget failures of chapters no longer waiting; skip chapters waiting for their next try or given up on
         DownloadFailures.Prune(missingChapters.Select(ch => ch.Key));
         DateTime now = DateTime.UtcNow;
-        missingChapters.RemoveAll(ch => chaptersDownloading.Contains(ch.Key) || DownloadFailures.IsWaiting(ch.Key, now)
+        // A chapter can be marked on several websites (a series downloading from more than one): download it once,
+        // from the series' preferred website if that has it
+        HashSet<string> chaptersBeingDownloaded = missingChapters.Where(ch => chaptersDownloading.Contains(ch.Key))
+            .Select(ch => ch.ObjId).ToHashSet();
+        missingChapters = PickOneWebsitePerChapter(missingChapters, SeriesPreferences.PreferredWebsite,
+            key => DownloadFailures.Get(key)?.GaveUp == true);
+        missingChapters.RemoveAll(ch => chaptersBeingDownloaded.Contains(ch.ObjId) || DownloadFailures.IsWaiting(ch.Key, now)
                                         || DownloadQueue.IsPaused(ch.Obj.ParentMangaId));
         PartialDownloads.CleanupOld();
         if (DownloadQueue.PausedAll)
@@ -86,6 +92,26 @@ public class StartNewChapterDownloadsWorker(TimeSpan? interval = null, IEnumerab
         return newWorkers.ToArray();
     }
     
+    /// <summary>
+    /// One website per chapter: the series' preferred website first, then the others by name, skipping websites Tranga
+    /// gave up on for that chapter. While the chosen website waits to retry, the chapter waits for it.
+    /// </summary>
+    internal static List<MangaConnectorId<Chapter>> PickOneWebsitePerChapter(IEnumerable<MangaConnectorId<Chapter>> links,
+        Func<string, string?> preferredWebsiteOfManga, Func<string, bool> gaveUp) =>
+        links.GroupBy(l => l.ObjId)
+            .Select(g =>
+            {
+                Chapter chapter = g.First().Obj;
+                // ParentMangaId comes from the database; a chapter made in code only has ParentManga
+                string? preferred = preferredWebsiteOfManga(chapter.ParentMangaId ?? chapter.ParentManga?.Key ?? "");
+                return g.Where(l => !gaveUp(l.Key))
+                           .OrderBy(l => string.Equals(l.MangaConnectorName, preferred, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+                           .ThenBy(l => l.MangaConnectorName, StringComparer.OrdinalIgnoreCase)
+                           .FirstOrDefault()
+                       ?? g.First();
+            })
+            .ToList();
+
     internal static async Task<List<MangaConnectorId<Chapter>>> GetMissingChapters(MangaContext ctx, CancellationToken cancellationToken) => await ctx.MangaConnectorToChapter
         .Include(id => id.Obj)
         .Where(id => !id.Obj.Downloaded && id.UseForDownload)

@@ -111,6 +111,63 @@ public class ChapterFilesController(MangaContext context) : ControllerBase
         return TypedResults.Ok();
     }
 
+    /// <summary>
+    /// Downloads a chapter again, from the website given (e.g. when the file has missing or broken pages): deletes the
+    /// current file and downloads the chapter from that website only, starting now.
+    /// </summary>
+    /// <param name="ChapterId">Chapter.Key</param>
+    /// <param name="MangaConnectorName">Website to download it from (one the chapter is listed on)</param>
+    /// <response code="202">Old file deleted (if there was one) and the download started</response>
+    /// <response code="404">Chapter not found, or not listed on that website</response>
+    /// <response code="500">File couldn't be deleted or database error</response>
+    [HttpPost("{ChapterId}/Redownload/{MangaConnectorName}")]
+    [ProducesResponseType(Status202Accepted)]
+    [ProducesResponseType<string>(Status404NotFound, "text/plain")]
+    [ProducesResponseType<string>(Status500InternalServerError, "text/plain")]
+    public async Task<Results<Accepted, NotFound<string>, InternalServerError<string>>> Redownload(string ChapterId, string MangaConnectorName)
+    {
+        if (await context.Chapters
+                .Include(c => c.ParentManga)
+                .ThenInclude(m => m.Library)
+                .Include(c => c.MangaConnectorIds)
+                .FirstOrDefaultAsync(c => c.Key == ChapterId, HttpContext.RequestAborted) is not { } chapter)
+            return TypedResults.NotFound(nameof(ChapterId));
+        if (chapter.MangaConnectorIds.FirstOrDefault(id =>
+                string.Equals(id.MangaConnectorName, MangaConnectorName, StringComparison.OrdinalIgnoreCase)) is not { } from
+            || !Tranga.TryGetMangaConnector(from.MangaConnectorName, out _))
+            return TypedResults.NotFound(nameof(MangaConnectorName));
+        if (Tranga.GetRunningWorkers().OfType<Workers.MangaDownloadWorkers.DownloadChapterFromMangaconnectorWorker>()
+            .Any(w => chapter.MangaConnectorIds.Any(id => id.Key == w.ChapterIdId) && w.State < WorkerExecutionState.Completed))
+            return TypedResults.InternalServerError("This chapter is downloading right now; try again when it's finished.");
+
+        // Only the chosen website, so the download scheduler doesn't pick another one
+        foreach (MangaConnectorId<Chapter> id in chapter.MangaConnectorIds)
+        {
+            id.UseForDownload = id == from;
+            Downloads.DownloadFailures.Retry(id.Key);
+        }
+
+        if (chapter.FullArchiveFilePath is { } path && System.IO.File.Exists(path))
+        {
+            try
+            {
+                System.IO.File.Delete(path);
+            }
+            catch (Exception e)
+            {
+                return TypedResults.InternalServerError($"Could not delete {path}: {e.Message}");
+            }
+        }
+        chapter.Downloaded = false;
+        chapter.FileName = null; // named again with the current naming settings
+
+        if (await context.Sync(HttpContext.RequestAborted, GetType(), "Redownload chapter") is { success: false } result)
+            return TypedResults.InternalServerError(result.exceptionMessage ?? "Database error");
+
+        Tranga.AddWorker(new Workers.MangaDownloadWorkers.DownloadChapterFromMangaconnectorWorker(from));
+        return TypedResults.Accepted((string?)null);
+    }
+
     /// <summary>Disk use of all downloaded chapters</summary>
     /// <param name="TotalBytes">Sum of all chapter files</param>
     /// <param name="FileCount">Number of chapter files found on disk</param>

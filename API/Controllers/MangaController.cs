@@ -276,6 +276,9 @@ public class MangaController(MangaContext context, ActionsContext actionsContext
         {
             foreach (Schema.MangaContext.MangaConnectorId<Chapter> chId in chIds)
             {
+                // Switching a website on doesn't select chapters before the series' "start from chapter"
+                if (IsRequested && Chapter.IsBeforeStart(chId.Obj.ChapterNumber, manga.IgnoreChaptersBefore))
+                    continue;
                 chId.UseForDownload = IsRequested;
             }
         }

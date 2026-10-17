@@ -89,12 +89,14 @@ public class RetrieveMangaChaptersFromMangaconnectorWorker(MangaConnectorId<Mang
         if (mangaConnectorId.UseForDownload)
         {
             // Chapters new to this Manga (their links are already attached to them, so they aren't in newIds)
-            foreach ((Chapter _, MangaConnectorId<Chapter> chapterId) in newChapters)
-                chapterId.UseForDownload = true;
+            // Chapters before the series' "start from chapter" are left alone
+            foreach ((Chapter chapter, MangaConnectorId<Chapter> chapterId) in newChapters)
+                if (!Chapter.IsBeforeStart(chapter.ChapterNumber, manga.IgnoreChaptersBefore))
+                    chapterId.UseForDownload = true;
             // New links for Chapters already known from another website
             foreach (MangaConnectorId<Chapter> chapterId in newIds)
             {
-                if (!chapterId.Obj.Downloaded)
+                if (!chapterId.Obj.Downloaded && !Chapter.IsBeforeStart(chapterId.Obj.ChapterNumber, manga.IgnoreChaptersBefore))
                     chapterId.UseForDownload = true;
             }
         }
