@@ -51,6 +51,9 @@ public struct TrangaSettings
 
     public int MaxConcurrentWorkers { get; set; } = Math.Max(Environment.ProcessorCount, 4); // Minimum of 4 Tasks, maximum of 1 per Core
 
+    /// <summary>Pages of one chapter downloaded at the same time (1–8)</summary>
+    public int PagesAtOnce { get; set; } = 2;
+
     public LibraryRefreshSetting LibraryRefreshSetting { get; set; } = LibraryRefreshSetting.AfterMangaFinished;
 
     public int RefreshLibraryWhileDownloadingEveryMinutes { get; set; } = 10;
@@ -117,6 +120,12 @@ public struct TrangaSettings
     public void SetMaxConcurrentDownloadsPerConnector(int value)
     {
         this.MaxConcurrentDownloadsPerConnector = value;
+        Save();
+    }
+
+    public void SetPagesAtOnce(int value)
+    {
+        this.PagesAtOnce = value;
         Save();
     }
 

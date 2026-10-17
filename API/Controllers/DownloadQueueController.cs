@@ -30,8 +30,75 @@ public class DownloadQueueController(MangaContext context) : ControllerBase
     /// <param name="Websites">Websites the chapters come from</param>
     /// <param name="Failed">Chapters Tranga gave up on (see DownloadFailures)</param>
     /// <param name="Retrying">Chapters that failed and wait for their next try</param>
+    /// <param name="Paused">This series' downloads are paused</param>
     public record DownloadQueueEntryDto(string MangaId, string Name, int Position, int ChaptersLeft, int Downloading,
-        string? NextChapter, List<string> Websites, int Failed, int Retrying);
+        string? NextChapter, List<string> Websites, int Failed, int Retrying, bool Paused);
+
+    /// <summary>Whether downloads are paused</summary>
+    /// <param name="PausedAll">No new downloads start (running ones finish)</param>
+    public record DownloadQueueStatusDto(bool PausedAll);
+
+    /// <summary>
+    /// Whether all downloads are paused
+    /// </summary>
+    /// <response code="200"></response>
+    [HttpGet("Status")]
+    [ProducesResponseType<DownloadQueueStatusDto>(Status200OK, "application/json")]
+    public Ok<DownloadQueueStatusDto> GetStatus() => TypedResults.Ok(new DownloadQueueStatusDto(DownloadQueue.PausedAll));
+
+    /// <summary>
+    /// Pauses all downloads: no new chapters start; chapters downloading now finish
+    /// </summary>
+    /// <response code="200"></response>
+    [HttpPost("Pause")]
+    [ProducesResponseType<DownloadQueueStatusDto>(Status200OK, "application/json")]
+    public Ok<DownloadQueueStatusDto> PauseAll()
+    {
+        DownloadQueue.PausedAll = true;
+        return TypedResults.Ok(new DownloadQueueStatusDto(true));
+    }
+
+    /// <summary>
+    /// Resumes all downloads (series paused one by one stay paused)
+    /// </summary>
+    /// <response code="200"></response>
+    [HttpPost("Resume")]
+    [ProducesResponseType<DownloadQueueStatusDto>(Status200OK, "application/json")]
+    public Ok<DownloadQueueStatusDto> ResumeAll()
+    {
+        DownloadQueue.PausedAll = false;
+        return TypedResults.Ok(new DownloadQueueStatusDto(false));
+    }
+
+    /// <summary>
+    /// Pauses one series: its chapters don't start downloading until it is resumed (it keeps its place in the queue)
+    /// </summary>
+    /// <param name="MangaId">Manga.Key</param>
+    /// <response code="200">The queue</response>
+    /// <response code="404">No such Manga</response>
+    [HttpPost("{MangaId}/Pause")]
+    [ProducesResponseType<List<DownloadQueueEntryDto>>(Status200OK, "application/json")]
+    [ProducesResponseType<string>(Status404NotFound, "text/plain")]
+    public Task<Results<Ok<List<DownloadQueueEntryDto>>, NotFound<string>>> Pause(string MangaId) => SetPaused(MangaId, true);
+
+    /// <summary>
+    /// Resumes one paused series
+    /// </summary>
+    /// <param name="MangaId">Manga.Key</param>
+    /// <response code="200">The queue</response>
+    /// <response code="404">No such Manga</response>
+    [HttpPost("{MangaId}/Resume")]
+    [ProducesResponseType<List<DownloadQueueEntryDto>>(Status200OK, "application/json")]
+    [ProducesResponseType<string>(Status404NotFound, "text/plain")]
+    public Task<Results<Ok<List<DownloadQueueEntryDto>>, NotFound<string>>> Resume(string MangaId) => SetPaused(MangaId, false);
+
+    private async Task<Results<Ok<List<DownloadQueueEntryDto>>, NotFound<string>>> SetPaused(string mangaId, bool paused)
+    {
+        if (!await context.Mangas.AnyAsync(m => m.Key == mangaId, HttpContext.RequestAborted))
+            return TypedResults.NotFound(nameof(mangaId));
+        DownloadQueue.SetPaused(mangaId, paused);
+        return TypedResults.Ok(await Entries(HttpContext.RequestAborted));
+    }
 
     /// <summary>
     /// Returns the series waiting to download, in download order
@@ -96,7 +163,8 @@ public class DownloadQueueController(MangaContext context) : ControllerBase
                     g.Count(ch => downloading.Contains(ch.Key)), next,
                     g.Select(ch => ch.MangaConnectorName).Distinct().Order().ToList(),
                     g.Count(ch => DownloadFailures.Get(ch.Key) is { GaveUp: true, SwitchedTo: null }),
-                    g.Count(ch => DownloadFailures.Get(ch.Key) is { GaveUp: false }));
+                    g.Count(ch => DownloadFailures.Get(ch.Key) is { GaveUp: false }),
+                    DownloadQueue.IsPaused(g.Key));
             })
             .OrderBy(e => e.Position)
             .ToList();

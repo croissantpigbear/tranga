@@ -26,15 +26,18 @@ public class DownloadLimitsController : ControllerBase
     /// <param name="RunningWorkers">Jobs running right now</param>
     /// <param name="TotalMemoryBytes">Memory available to the API (the container limit, if one is set)</param>
     /// <param name="Architecture">CPU architecture the API runs on (X64, Arm64, …)</param>
+    /// <param name="PagesAtOnce">Pages of one chapter downloaded at the same time</param>
     public record DownloadLimitsDto(int MaxConcurrentDownloads, int MaxConcurrentDownloadsPerConnector, int RequestsPerMinute,
         int ProcessorCount, Dictionary<string, int> Downloading, int MaxConcurrentWorkers, int RunningWorkers,
-        long TotalMemoryBytes, string Architecture);
+        long TotalMemoryBytes, string Architecture, int PagesAtOnce);
 
     /// <summary>New limits (leave a value out to keep it)</summary>
     /// <param name="MaxConcurrentDownloads">1–20</param>
     /// <param name="MaxConcurrentDownloadsPerConnector">1–10</param>
     /// <param name="MaxConcurrentWorkers">2–64, and at least MaxConcurrentDownloads + 2 (so chapter checks can run during downloads)</param>
-    public record DownloadLimitsRequest(int? MaxConcurrentDownloads, int? MaxConcurrentDownloadsPerConnector, int? MaxConcurrentWorkers = null);
+    /// <param name="PagesAtOnce">1–8 pages of one chapter at the same time</param>
+    public record DownloadLimitsRequest(int? MaxConcurrentDownloads, int? MaxConcurrentDownloadsPerConnector, int? MaxConcurrentWorkers = null,
+        int? PagesAtOnce = null);
 
     /// <summary>
     /// Current download limits and what's downloading now
@@ -58,6 +61,8 @@ public class DownloadLimitsController : ControllerBase
             return TypedResults.BadRequest($"{nameof(request.MaxConcurrentDownloads)} must be 1–20");
         if (request.MaxConcurrentDownloadsPerConnector is < 1 or > 10)
             return TypedResults.BadRequest($"{nameof(request.MaxConcurrentDownloadsPerConnector)} must be 1–10");
+        if (request.PagesAtOnce is < 1 or > 8)
+            return TypedResults.BadRequest($"{nameof(request.PagesAtOnce)} must be 1–8");
         if (request.MaxConcurrentWorkers is < 2 or > 64)
             return TypedResults.BadRequest($"{nameof(request.MaxConcurrentWorkers)} must be 2–64");
         int downloads = request.MaxConcurrentDownloads ?? Tranga.Settings.MaxConcurrentDownloads;
@@ -70,6 +75,8 @@ public class DownloadLimitsController : ControllerBase
             Tranga.Settings.SetMaxConcurrentDownloads(t);
         if (request.MaxConcurrentDownloadsPerConnector is { } p)
             Tranga.Settings.SetMaxConcurrentDownloadsPerConnector(p);
+        if (request.PagesAtOnce is { } pages)
+            Tranga.Settings.SetPagesAtOnce(pages);
         return TypedResults.Ok(Current());
     }
 
@@ -86,5 +93,6 @@ public class DownloadLimitsController : ControllerBase
         Tranga.Settings.MaxConcurrentWorkers,
         Tranga.GetRunningWorkers().Length,
         GC.GetGCMemoryInfo().TotalAvailableMemoryBytes,
-        System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture.ToString());
+        System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture.ToString(),
+        Tranga.Settings.PagesAtOnce);
 }

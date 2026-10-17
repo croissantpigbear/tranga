@@ -45,7 +45,14 @@ public class StartNewChapterDownloadsWorker(TimeSpan? interval = null, IEnumerab
         // Forget failures of chapters no longer waiting; skip chapters waiting for their next try or given up on
         DownloadFailures.Prune(missingChapters.Select(ch => ch.Key));
         DateTime now = DateTime.UtcNow;
-        missingChapters.RemoveAll(ch => chaptersDownloading.Contains(ch.Key) || DownloadFailures.IsWaiting(ch.Key, now));
+        missingChapters.RemoveAll(ch => chaptersDownloading.Contains(ch.Key) || DownloadFailures.IsWaiting(ch.Key, now)
+                                        || DownloadQueue.IsPaused(ch.Obj.ParentMangaId));
+        PartialDownloads.CleanupOld();
+        if (DownloadQueue.PausedAll)
+        {
+            Log.Debug("Downloads are paused.");
+            return [];
+        }
         Log.DebugFormat("{0} chapter not being downloaded", missingChapters.Count);
         
         // Maximum concurrent downloads, overall and per website

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.IO.Compression;
 using System.Runtime.InteropServices;
@@ -73,6 +74,9 @@ public class DownloadChapterFromMangaconnectorWorker(MangaConnectorId<Chapter> c
             return chapter.GetComicInfoXmlString();
         }
     }
+
+    /// <summary>Tries per page before the chapter counts as failed</summary>
+    private const int PageAttempts = 3;
 
     /// <summary>Why this download failed (set before giving up on it), for <see cref="DownloadFailures"/></summary>
     private string? _failure;
@@ -206,44 +210,95 @@ public class DownloadChapterFromMangaconnectorWorker(MangaConnectorId<Chapter> c
         }
 
         Log.Info($"Downloading images: {chapter}");
-        List<Stream> images = [];
-        int imageCount = 0;
-        //Download all Images to temporary Folder
-        foreach (string imageUrl in imageUrls)
+        // Each page is saved as soon as it arrives, so a retry only fetches the missing ones
+        int pageCount = imageUrls.Length;
+        string pagesDir = PartialDownloads.Prepare(chapter.Key, mangaConnectorId.MangaConnectorName, pageCount);
+        int done = Enumerable.Range(0, pageCount).Count(i => PartialDownloads.HasPage(PartialDownloads.PagePath(pagesDir, i)));
+        if (done > 0)
+            Log.Info($"{done} of {pageCount} pages of {chapter} were downloaded earlier; fetching the rest");
+        ConcurrentDictionary<int, string> failedPages = new();
+        using SemaphoreSlim slots = new(Math.Clamp(Tranga.Settings.PagesAtOnce, 1, 8));
+        using SemaphoreSlim progressGate = new(1, 1);
+
+        async Task DownloadPage(int index)
         {
+            string path = PartialDownloads.PagePath(pagesDir, index);
+            if (PartialDownloads.HasPage(path))
+                return;
+            await slots.WaitAsync(CancellationToken);
             try
             {
-                if (await mangaConnector.DownloadImage(imageUrl, CancellationToken) is not { } stream)
+                string error = "";
+                for (int attempt = 1; attempt <= PageAttempts; attempt++)
                 {
-                    Log.Error($"Failed to download image: {imageUrl}");
-                    _failure = $"Page {imageCount + 1} of {imageUrls.Length} couldn't be downloaded";
-                    if (ProgressReporter is not null)
-                        await ProgressReporter.ReportFailed(this, chapter.Key, chapter.ParentMangaId,
-                            chapter.ParentManga.Name, chapter.ChapterNumber);
-                    return [];
+                    if (attempt > 1)
+                        await Task.Delay(TimeSpan.FromSeconds(3 * (attempt - 1)), CancellationToken); // 3 s, then 6 s
+                    try
+                    {
+                        if (await mangaConnector.DownloadImage(imageUrls[index], CancellationToken) is not { } stream)
+                        {
+                            error = "the website didn't send the image";
+                            continue;
+                        }
+                        await using (stream)
+                        {
+                            Stream processed = await ProcessImage(stream, CancellationToken);
+                            await using (processed)
+                            {
+                                string part = path + ".part";
+                                await using (FileStream file = File.Create(part))
+                                {
+                                    processed.Position = 0;
+                                    await processed.CopyToAsync(file, CancellationToken);
+                                }
+                                File.Move(part, path, true);
+                            }
+                        }
+                        int now = Interlocked.Increment(ref done);
+                        if (ProgressReporter is not null)
+                        {
+                            await progressGate.WaitAsync(CancellationToken);
+                            try
+                            {
+                                await ProgressReporter.ReportProgress(this, chapter.Key, chapter.ParentMangaId,
+                                    chapter.ParentManga.Name, chapter.ChapterNumber, now, pageCount, DownloadPhase.DownloadingImages);
+                            }
+                            finally
+                            {
+                                progressGate.Release();
+                            }
+                        }
+                        return;
+                    }
+                    catch (Exception e) when (e is not OperationCanceledException)
+                    {
+                        error = e.Message;
+                    }
+                    Log.Debug($"Page {index + 1} of {chapter}: try {attempt} of {PageAttempts} failed ({error})");
                 }
-                else
-                {
-                    images.Add(await ProcessImage(stream, CancellationToken));
-                    imageCount++;
-                    if (ProgressReporter is not null)
-                        await ProgressReporter.ReportProgress(this, chapter.Key, chapter.ParentMangaId,
-                            chapter.ParentManga.Name, chapter.ChapterNumber, imageCount, imageUrls.Length,
-                            DownloadPhase.DownloadingImages);
-                }
+                failedPages[index] = error;
+                Log.Error($"Failed to download page {index + 1} of {chapter}: {imageUrls[index]} ({error})");
             }
-            catch (Exception ex)
+            finally
             {
-                Log.Error(ex);
-                images.ForEach(i => i.Dispose());
-                if (ex is OperationCanceledException)
-                    throw;
-                _failure = $"Page {imageCount + 1} of {imageUrls.Length} couldn't be downloaded: {ex.Message}";
-                if (ProgressReporter is not null)
-                    await ProgressReporter.ReportFailed(this, chapter.Key, chapter.ParentMangaId,
-                        chapter.ParentManga.Name, chapter.ChapterNumber);
-                return [];
+                slots.Release();
             }
+        }
+
+        await Task.WhenAll(Enumerable.Range(0, pageCount).Select(DownloadPage));
+        if (!failedPages.IsEmpty)
+        {
+            (int firstPage, string firstError) = failedPages.OrderBy(f => f.Key).Select(f => (f.Key, f.Value)).First();
+            _failure = failedPages.Count == 1
+                ? $"Page {firstPage + 1} of {pageCount} couldn't be downloaded after {PageAttempts} tries ({firstError})"
+                : $"{failedPages.Count} of {pageCount} pages couldn't be downloaded after {PageAttempts} tries each " +
+                  $"(first: page {firstPage + 1}, {firstError})";
+            if (pageCount - failedPages.Count > 0)
+                _failure += $". The {pageCount - failedPages.Count} pages that worked are kept for the next try";
+            if (ProgressReporter is not null)
+                await ProgressReporter.ReportFailed(this, chapter.Key, chapter.ParentMangaId,
+                    chapter.ParentManga.Name, chapter.ChapterNumber);
+            return [];
         }
         
         await CopyCoverFromCacheToDownloadLocation(chapter.ParentManga);
@@ -272,20 +327,19 @@ public class DownloadChapterFromMangaconnectorWorker(MangaConnectorId<Chapter> c
             {
                 Log.Debug("Writing ComicInfo.xml");
                 Stream comicStream = archive.CreateEntry("ComicInfo.xml").Open();
-                string comicInfo = await BuildComicInfo(chapter, images.Count, mangaConnectorId.MangaConnectorName);
+                string comicInfo = await BuildComicInfo(chapter, pageCount, mangaConnectorId.MangaConnectorName);
                 await comicStream.WriteAsync(Encoding.UTF8.GetBytes(comicInfo), CancellationToken);
                 await comicStream.DisposeAsync();
             }
             else
                 Log.Debug("Skipping ComicInfo.xml. CREATE_COMICINFO_XML is set to false");
             
-            for (int i = 0; i < images.Count; i++)
+            for (int i = 0; i < pageCount; i++)
             {
                 Log.Debug($"Packaging images to archive {chapter} , image {i}");
                 Stream zipStream = archive.CreateEntry($"{i}.jpg").Open();
-                Stream imageStream = images[i];
-                imageStream.Position = 0;
-                await imageStream.CopyToAsync(zipStream, CancellationToken);
+                await using (FileStream page = File.OpenRead(PartialDownloads.PagePath(pagesDir, i)))
+                    await page.CopyToAsync(zipStream, CancellationToken);
                 await zipStream.DisposeAsync();
             }
         }
@@ -295,10 +349,6 @@ public class DownloadChapterFromMangaconnectorWorker(MangaConnectorId<Chapter> c
             if (ex is OperationCanceledException)
                 throw;
             _failure = $"Couldn't save the chapter file: {ex.Message}";
-        }
-        finally
-        {
-            images.ForEach(i => i.Dispose());
         }
         if (_failure is not null)
         {
@@ -316,6 +366,7 @@ public class DownloadChapterFromMangaconnectorWorker(MangaConnectorId<Chapter> c
 
         chapter.Downloaded = true;
         _succeeded = true;
+        PartialDownloads.Delete(chapter.Key);
         chapter.FileName = new FileInfo(saveArchiveFilePath).Name;
         if(await MangaContext.Sync(CancellationToken, GetType(), "Downloading complete") is { success: false } chapterContextException)
             Log.Error($"Failed to save database changes: {chapterContextException.exceptionMessage}");

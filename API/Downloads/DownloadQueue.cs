@@ -15,38 +15,78 @@ public static class DownloadQueue
     private static readonly ILog Log = LogManager.GetLogger(typeof(DownloadQueue));
     private static readonly Lock QueueLock = new();
     private static string FilePath => Path.Join(TrangaSettings.WorkingDirectory, "download-queue.json");
-    private static List<string>? _order;
+    private class State
+    {
+        public List<string> Order { get; set; } = [];
+        /// <summary>Series whose downloads are paused</summary>
+        public HashSet<string> Paused { get; set; } = [];
+        /// <summary>All downloads paused</summary>
+        public bool PausedAll { get; set; }
+    }
 
-    private static List<string> Order
+    private static State? _state;
+
+    private static State Data
     {
         get
         {
-            if (_order is not null)
-                return _order;
+            if (_state is not null)
+                return _state;
             try
             {
                 if (File.Exists(FilePath))
-                    _order = JsonConvert.DeserializeObject<List<string>>(File.ReadAllText(FilePath));
+                {
+                    string json = File.ReadAllText(FilePath).TrimStart();
+                    // The first version stored only the order, as a list
+                    _state = json.StartsWith('[')
+                        ? new State { Order = JsonConvert.DeserializeObject<List<string>>(json) ?? [] }
+                        : JsonConvert.DeserializeObject<State>(json);
+                }
             }
             catch (Exception e)
             {
                 Log.Warn($"Couldn't read {FilePath}: {e.Message}");
             }
-            return _order ??= [];
+            return _state ??= new State();
         }
     }
+
+    private static List<string> Order => Data.Order;
 
     private static void Save()
     {
         try
         {
             string tmp = FilePath + ".tmp";
-            File.WriteAllText(tmp, JsonConvert.SerializeObject(Order));
+            File.WriteAllText(tmp, JsonConvert.SerializeObject(Data));
             File.Move(tmp, FilePath, true);
         }
         catch (Exception e)
         {
             Log.Warn($"Couldn't save {FilePath}: {e.Message}");
+        }
+    }
+
+    /// <summary>No new downloads start while true (running ones finish)</summary>
+    public static bool PausedAll
+    {
+        get { lock (QueueLock) return Data.PausedAll; }
+        set { lock (QueueLock) { Data.PausedAll = value; Save(); } }
+    }
+
+    public static bool IsPaused(string mangaId)
+    {
+        lock (QueueLock)
+            return Data.Paused.Contains(mangaId);
+    }
+
+    /// <summary>Pauses or resumes one series (it keeps its place in the queue)</summary>
+    public static void SetPaused(string mangaId, bool paused)
+    {
+        lock (QueueLock)
+        {
+            if (paused ? Data.Paused.Add(mangaId) : Data.Paused.Remove(mangaId))
+                Save();
         }
     }
 
