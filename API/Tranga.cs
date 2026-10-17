@@ -46,6 +46,7 @@ public static class Tranga
     internal static readonly CleanupMangaconnectorIdsWithoutConnector CleanupMangaconnectorIdsWithoutConnector = new();
     internal static readonly FillExtraMetadataWorker FillExtraMetadataWorker = new();
     internal static readonly SyncKavitaCoversWorker SyncKavitaCoversWorker = new();
+    internal static readonly CheckLuaUpdatesWorker CheckLuaUpdatesWorker = new();
     // ReSharper restore MemberCanBePrivate.Global
 
     internal static readonly RateLimitHandler RateLimitHandler = new();
@@ -76,6 +77,7 @@ public static class Tranga
         AddWorker(UpdateCoversWorker);
         AddWorker(FillExtraMetadataWorker);
         AddWorker(SyncKavitaCoversWorker);
+        AddWorker(CheckLuaUpdatesWorker);
         
         if(Constants.UpdateChaptersDownloadedBeforeStarting)
             AddWorker(UpdateChaptersDownloadedWorker);

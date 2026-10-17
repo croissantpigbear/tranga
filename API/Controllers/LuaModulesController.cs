@@ -310,4 +310,111 @@ public class LuaModulesController : ControllerBase
         : string.IsNullOrEmpty(Tranga.Settings.FlareSolverrUrl)
             ? $"The website refused Tranga's requests (HTTP {status}). This is usually Cloudflare's bot protection. Set up FlareSolverr (Settings → Network → FlareSolverr) and test again: Tranga then retries blocked pages through it."
             : $"The website refused Tranga's requests (HTTP {status}), even with FlareSolverr set up. Check that FlareSolverr is running, or the site may block automated downloads altogether.";
+
+    /// <summary>An uploaded Lua file compared with FMD2</summary>
+    /// <param name="Kind">module, template or helper</param>
+    /// <param name="FileName">File name</param>
+    /// <param name="Status">upToDate, updateAvailable, notInFmd2 (not in the FMD2 repository, e.g. renamed or your own)</param>
+    /// <param name="RemoteChangedUtc">When FMD2 last changed the file</param>
+    /// <param name="RemoteChangeMessage">Description of that change</param>
+    /// <param name="CanUndo">An older version is kept</param>
+    /// <param name="UpdatedUtc">When Tranga last updated it</param>
+    public record LuaFileUpdateDto(string Kind, string FileName, string Status, DateTime? RemoteChangedUtc, string? RemoteChangeMessage,
+        bool CanUndo, DateTime? UpdatedUtc);
+
+    /// <summary>Update check results and settings</summary>
+    /// <param name="Repository">GitHub repository the files come from</param>
+    /// <param name="Branch">Its branch</param>
+    /// <param name="AutoUpdate">Install updates automatically after the daily check</param>
+    /// <param name="LastCheckUtc">Last check</param>
+    /// <param name="LastError">Why the last check failed</param>
+    /// <param name="Files">Every uploaded file</param>
+    public record LuaUpdatesDto(string Repository, string Branch, bool AutoUpdate, DateTime? LastCheckUtc, string? LastError,
+        List<LuaFileUpdateDto> Files);
+
+    /// <summary>Update settings (leave a value out to keep it)</summary>
+    public record LuaUpdateSettingsRequest(bool? AutoUpdate, string? Repository, string? Branch);
+
+    /// <summary>Result of updating a file</summary>
+    public record LuaUpdateResultDto(string FileName, bool Ok, string Message);
+
+    private static LuaUpdatesDto UpdatesDto(LuaUpdateChecker.State state) => new(state.Repository, state.Branch, state.AutoUpdate,
+        state.LastCheckUtc, state.LastError,
+        state.Files.Select(f => new LuaFileUpdateDto(f.Kind, f.FileName, f.Status, f.RemoteChangedUtc, f.RemoteChangeMessage,
+            f.HasBackup, f.UpdatedUtc)).ToList());
+
+    /// <summary>
+    /// Last update check of the uploaded Lua files against FMD2 (checked daily)
+    /// </summary>
+    /// <response code="200"></response>
+    [HttpGet("Updates")]
+    [ProducesResponseType<LuaUpdatesDto>(Status200OK, "application/json")]
+    public Ok<LuaUpdatesDto> GetUpdates() => TypedResults.Ok(UpdatesDto(LuaUpdateChecker.Load()));
+
+    /// <summary>
+    /// Checks the uploaded Lua files against FMD2 on GitHub now
+    /// </summary>
+    /// <response code="200">Results (LastError is set if GitHub couldn't be reached)</response>
+    [HttpPost("Updates/Check")]
+    [ProducesResponseType<LuaUpdatesDto>(Status200OK, "application/json")]
+    public async Task<Ok<LuaUpdatesDto>> CheckUpdates() =>
+        TypedResults.Ok(UpdatesDto(await LuaUpdateChecker.Check(HttpContext.RequestAborted)));
+
+    /// <summary>
+    /// Changes the update settings
+    /// </summary>
+    /// <response code="200"></response>
+    [HttpPatch("Updates")]
+    [ProducesResponseType<LuaUpdatesDto>(Status200OK, "application/json")]
+    public Ok<LuaUpdatesDto> SetUpdateSettings([FromBody] LuaUpdateSettingsRequest request)
+    {
+        LuaUpdateChecker.SetSettings(request.AutoUpdate, request.Repository, request.Branch);
+        return TypedResults.Ok(UpdatesDto(LuaUpdateChecker.Load()));
+    }
+
+    /// <summary>
+    /// Installs FMD2's current version of one file (the old one is kept for Undo, and put back if the new one doesn't load)
+    /// </summary>
+    /// <param name="Kind">module, template or helper</param>
+    /// <param name="FileName">File name</param>
+    /// <response code="200"></response>
+    /// <response code="404">Unknown kind</response>
+    [HttpPost("Updates/{Kind}/{FileName}")]
+    [ProducesResponseType<LuaUpdateResultDto>(Status200OK, "application/json")]
+    [ProducesResponseType<string>(Status404NotFound, "text/plain")]
+    public async Task<Results<Ok<LuaUpdateResultDto>, NotFound<string>>> UpdateFile(string Kind, string FileName)
+    {
+        if (ParseKind(Kind) is not { } kind)
+            return TypedResults.NotFound(nameof(Kind));
+        LuaUpdateChecker.UpdateResult r = await LuaUpdateChecker.Update(kind, FileName, HttpContext.RequestAborted);
+        return TypedResults.Ok(new LuaUpdateResultDto(r.FileName, r.Ok, r.Message));
+    }
+
+    /// <summary>
+    /// Installs every available update (templates and helpers first)
+    /// </summary>
+    /// <response code="200">One result per file</response>
+    [HttpPost("Updates/All")]
+    [ProducesResponseType<List<LuaUpdateResultDto>>(Status200OK, "application/json")]
+    public async Task<Ok<List<LuaUpdateResultDto>>> UpdateAll() =>
+        TypedResults.Ok((await LuaUpdateChecker.UpdateAll(HttpContext.RequestAborted))
+            .Select(r => new LuaUpdateResultDto(r.FileName, r.Ok, r.Message)).ToList());
+
+    /// <summary>
+    /// Puts back the version from before the last update
+    /// </summary>
+    /// <param name="Kind">module, template or helper</param>
+    /// <param name="FileName">File name</param>
+    /// <response code="200"></response>
+    /// <response code="404">Unknown kind</response>
+    [HttpPost("Updates/{Kind}/{FileName}/Undo")]
+    [ProducesResponseType<LuaUpdateResultDto>(Status200OK, "application/json")]
+    [ProducesResponseType<string>(Status404NotFound, "text/plain")]
+    public Results<Ok<LuaUpdateResultDto>, NotFound<string>> UndoUpdate(string Kind, string FileName)
+    {
+        if (ParseKind(Kind) is not { } kind)
+            return TypedResults.NotFound(nameof(Kind));
+        LuaUpdateChecker.UpdateResult r = LuaUpdateChecker.Undo(kind, FileName);
+        return TypedResults.Ok(new LuaUpdateResultDto(r.FileName, r.Ok, r.Message));
+    }
 }

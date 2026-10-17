@@ -180,6 +180,7 @@ public partial class ActivityController(MangaContext context) : ControllerBase
         ["SyncKavitaCoversWorker"] = "Send new covers to Kavita",
         ["BuildLuaTitleListWorker"] = "Reading the title list of an FMD2 site",
         ["RelinkRetiredWebsitesWorker"] = "Moving manga off removed websites",
+        ["CheckLuaUpdatesWorker"] = "Checking FMD2 website modules for updates",
         ["PushKavitaCoversWorker"] = "Sending covers to Kavita",
         ["CleanupMangaCoversWorker"] = "Clean up unused covers",
         ["CleanupMangaconnectorIdsWithoutConnector"] = "Clean up removed websites",
