@@ -1,6 +1,6 @@
-# Tranga (fork with FMD2 websites, ComicInfo.xml, Kavita covers, download queue, optional login, backups, ...)
+# Tranga-Plus for Unraid (Docker Compose Manager plugin). Full step-by-step guide: README.md → "Install on Unraid".
 #
-# UNRAID version (Docker Compose Manager plugin). Website: http://<unraid-ip>:9555
+# Website: http://<unraid-ip>:9555
 # Every folder is an absolute path: Compose Manager keeps relative paths on the USB flash drive, where Postgres can't run.
 #   /mnt/user/appdata/tranga/settings   settings, FMD2 modules, login
 #   /mnt/cache/appdata/tranga/postgres  database (cache/SSD pool; use your pool's name if it isn't "cache")

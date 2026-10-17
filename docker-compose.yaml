@@ -1,21 +1,20 @@
-# Tranga (fork with FMD2 websites, ComicInfo.xml, Kavita covers, download queue, optional login, backups, ...)
+# Tranga-Plus: Tranga with FMD2 websites, a download queue, failed-download handling, AniList/MangaUpdates details,
+# full ComicInfo.xml, Kavita covers, release calendar, library import, optional login and daily backups.
 #
-# Uses the published images (ghcr.io/croissantpigbear/...): put this file and .env in a folder, then  docker compose up -d
-# To build from source instead, clone both repositories next to each other:
-#   git clone -b tranga-plus https://github.com/croissantpigbear/tranga.git
-#   git clone -b tranga-plus https://github.com/croissantpigbear/tranga-website.git
-#   cd tranga && docker compose up -d --build
-# Website: http://localhost:9555   (API documentation: http://localhost:9555/swagger)
+# HOW TO USE (full guide: README.md → "Install"):
+#   1. Put this file in an empty folder, e.g. ~/tranga-plus
+#   2. Copy .env.example next to it as ".env" and set POSTGRES_PASSWORD
+#   3. In that folder:  mkdir -p Manga settings postgres backups
+#   4. docker compose pull && docker compose up -d
+#   5. Open http://<this computer's IP>:9555
 #
-# Works on Intel/AMD and ARM64 (Raspberry Pi 4/5 with a 64-bit OS); Docker picks the right one.
-# To update: docker compose pull && docker compose up -d
-#
-# Passwords and the time zone come from the .env file next to this one (see .env.example).
+# Works on Intel/AMD and ARM64 (Raspberry Pi 4/5 with a 64-bit OS, Apple Silicon); Docker picks the right one.
+# Update later with:  docker compose pull && docker compose up -d
+# Unraid: use docker-compose.unraid.yml instead. Building from source: docker-compose.local.yaml.
 
 services:
   tranga-api:
     image: ghcr.io/croissantpigbear/tranga-api:latest
-    build: .
     container_name: tranga-api
     user: "${UID:-1000}:${GID:-1000}"   # owner of downloaded files (Unraid: 99:100)
     volumes:
@@ -47,7 +46,6 @@ services:
 
   tranga-website:
     image: ghcr.io/croissantpigbear/tranga-website:latest
-    build: ../tranga-website
     container_name: tranga-website
     ports:
       - "9555:80"
