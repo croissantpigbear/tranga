@@ -75,6 +75,47 @@ public class DownloadChapterFromMangaconnectorWorker(MangaConnectorId<Chapter> c
         }
     }
 
+    /// <summary>
+    /// Loads the series' authors, tags, links and alternative titles for ComicInfo.xml. Uses a tracking query (it fills in
+    /// the tracked series), because EF can't explicitly load many-to-many collections without tracking ("Include path
+    /// 'Manga->Authors' results in a cycle"). A failure here never stops the download; ComicInfo.xml is then written
+    /// without those details.
+    /// </summary>
+    private async Task LoadMangaDetails(Manga manga)
+    {
+        try
+        {
+            if (MangaContext.Entry(manga).State != EntityState.Detached)
+            {
+                await MangaContext.Mangas
+                    .Include(m => m.Authors)
+                    .Include(m => m.MangaTags)
+                    .Include(m => m.Links)
+                    .Include(m => m.AltTitles)
+                    .Where(m => m.Key == manga.Key)
+                    .LoadAsync(CancellationToken);
+            }
+            else
+            {
+                // Not tracked, so it's never saved: safe to fill in directly
+                IQueryable<Manga> one = MangaContext.Mangas.AsNoTracking().Where(m => m.Key == manga.Key);
+                manga.Authors = await one.SelectMany(m => m.Authors).ToListAsync(CancellationToken);
+                manga.MangaTags = await one.SelectMany(m => m.MangaTags).ToListAsync(CancellationToken);
+                manga.Links = await one.SelectMany(m => m.Links).ToListAsync(CancellationToken);
+                manga.AltTitles = await one.SelectMany(m => m.AltTitles).ToListAsync(CancellationToken);
+            }
+        }
+        catch (Exception e)
+        {
+            Log.Warn($"Couldn't read the details of {manga} for ComicInfo.xml ({e.Message}); writing it without them.");
+            // Empty (not missing) so ComicInfo.xml and file naming still work; adds nothing to the database
+            manga.Authors ??= [];
+            manga.MangaTags ??= [];
+            manga.Links ??= [];
+            manga.AltTitles ??= [];
+        }
+    }
+
     /// <summary>Tries per page before the chapter counts as failed</summary>
     private const int PageAttempts = 3;
 
@@ -152,6 +193,13 @@ public class DownloadChapterFromMangaconnectorWorker(MangaConnectorId<Chapter> c
             return [];
         }
         
+        // A copy of this download that waited in the queue while another one failed: wait for the next try instead
+        if (DownloadFailures.IsWaiting(ChapterIdId, DateTime.UtcNow))
+        {
+            Log.Debug($"{mangaConnectorId} is waiting for its next try; not downloading it now.");
+            return [];
+        }
+
         // Check if Chapter already exists...
         if (await mangaConnectorId.Obj.CheckDownloaded(MangaContext, CancellationToken))
         {
@@ -318,8 +366,7 @@ public class DownloadChapterFromMangaconnectorWorker(MangaConnectorId<Chapter> c
         await CopyCoverFromCacheToDownloadLocation(chapter.ParentManga);
         
         Log.Debug($"Loading collections {chapter}");
-        foreach (CollectionEntry collectionEntry in MangaContext.Entry(chapter.ParentManga).Collections)
-            await collectionEntry.LoadAsync(CancellationToken);
+        await LoadMangaDetails(chapter.ParentManga);
 
         if (File.Exists(saveArchiveFilePath))
         {

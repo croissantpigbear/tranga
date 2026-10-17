@@ -282,6 +282,8 @@ public class ChaptersController(MangaContext context) : ControllerBase
 
         if (IsRequested)
         {
+            // Asked for by hand: try now, even if it was waiting for its next try after failing
+            API.Downloads.DownloadFailures.Retry(chId.Key);
             DownloadChapterFromMangaconnectorWorker worker = new(chId);
             Tranga.AddWorker(worker);
         }

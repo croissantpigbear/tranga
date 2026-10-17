@@ -32,7 +32,11 @@ public class StartNewChapterDownloadsWorker(TimeSpan? interval = null, IEnumerab
         List<MangaConnectorId<Chapter>> missingChapters = await GetMissingChapters(MangaContext, CancellationToken);
         
         Log.DebugFormat("Found {0} missing chapters.", missingChapters.Count);
+        // Running downloads, and ones queued behind the worker limit (they aren't "running" yet, but will be): counting
+        // only running ones queued the same chapter again every minute while Tranga was busy
         List<DownloadChapterFromMangaconnectorWorker> running = Tranga.GetRunningWorkers()
+            .Concat(Tranga.GetKnownWorkers())
+            .Distinct()
             .OfType<DownloadChapterFromMangaconnectorWorker>()
             .Where(w => w.State is >= WorkerExecutionState.Created and < WorkerExecutionState.Completed)
             .ToList();
