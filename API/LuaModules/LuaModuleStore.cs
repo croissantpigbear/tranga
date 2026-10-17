@@ -67,7 +67,19 @@ public static class LuaModuleStore
         return new State();
     }
 
-    private static void SaveState(State state) => File.WriteAllText(StatePath, JsonConvert.SerializeObject(state, Formatting.Indented));
+    private static void SaveState(State state)
+    {
+        try
+        {
+            File.WriteAllText(StatePath, JsonConvert.SerializeObject(state, Formatting.Indented));
+        }
+        catch (Exception e) when (e is UnauthorizedAccessException or IOException)
+        {
+            // Don't stop the modules loading: the sites still work, only renames/disabling aren't remembered
+            Log.Error($"Couldn't save {StatePath}: {e.Message} Tranga's user can't write to its settings folder; " +
+                      "give it ownership (Unraid: chown -R 99:100 /mnt/user/appdata/tranga/settings).");
+        }
+    }
 
     /// <summary>
     /// Names of every site an uploaded module file has had (also if it failed to load now), so their manga links are kept

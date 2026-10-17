@@ -190,7 +190,21 @@ public class DownloadChapterFromMangaconnectorWorker(MangaConnectorId<Chapter> c
 
         if (chapter.FullArchiveFilePath is not { } saveArchiveFilePath)
         {
-            Log.Error("Failed getting saveArchiveFilePath");
+            string reason;
+            try
+            {
+                reason = $"no folder for {chapter.ParentManga.FullDirectoryPath}";
+            }
+            catch (UnauthorizedAccessException e)
+            {
+                reason = $"{e.Message} Tranga's user can't write to the manga folder; give it ownership (Unraid: chown -R 99:100 /mnt/user/Manga).";
+            }
+            catch (Exception e)
+            {
+                reason = $"{e.GetType().Name}: {e.Message}";
+            }
+            Log.Error($"Failed getting saveArchiveFilePath for {chapter.ParentManga} {chapter}: {reason}");
+            _failure = $"Couldn't make the series folder: {reason}";
             return [];
         }
         Log.Debug($"Chapter path: {saveArchiveFilePath}");
