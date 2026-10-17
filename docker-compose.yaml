@@ -1,14 +1,16 @@
-# Tranga (fork with FMD2 websites, ComicInfo.xml, Kavita covers, download limits, ...)
+# Tranga (fork with FMD2 websites, ComicInfo.xml, Kavita covers, download queue, optional login, backups, ...)
 #
-# Uses the published images (ghcr.io/croissantpigbear/...): just run  docker compose up -d
+# Uses the published images (ghcr.io/croissantpigbear/...): put this file and .env in a folder, then  docker compose up -d
 # To build from source instead, clone both repositories next to each other:
 #   git clone -b tranga-plus https://github.com/croissantpigbear/tranga.git
 #   git clone -b tranga-plus https://github.com/croissantpigbear/tranga-website.git
 #   cd tranga && docker compose up -d --build
-# Website: http://localhost:9555   (API: http://localhost:6531/swagger)
+# Website: http://localhost:9555   (API documentation: http://localhost:9555/swagger)
 #
 # Works on Intel/AMD and ARM64 (Raspberry Pi 4/5 with a 64-bit OS); Docker picks the right one.
-# To update: docker compose pull && docker compose up -d   (from source: git pull in both, then up -d --build)
+# To update: docker compose pull && docker compose up -d
+#
+# Passwords and the time zone come from the .env file next to this one (see .env.example).
 
 services:
   tranga-api:
@@ -19,22 +21,23 @@ services:
     volumes:
       - ./Manga:/Manga                   # downloaded chapters (point Kavita/Komga here)
       - ./settings:/usr/share/tranga-api # settings, uploaded FMD2 modules (lua/), logs
-    ports:
-      - "6531:6531"
+      - ./backups:/backups:ro            # only read, to show backup status in Settings → Maintenance
+    # The website passes API requests through, so the API needs no port of its own.
+    # Uncomment only if another app must reach the API directly (then also switch on Settings → Login).
+    #ports:
+    #  - "6531:6531"
     depends_on:
       tranga-pg:
         condition: service_healthy
     environment:
       - POSTGRES_HOST=tranga-pg
       - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-      - TZ=Europe/London
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - TZ=${TZ:-Europe/London}
+      # Forgot the login password? Uncomment, restart, then change it in Settings → Login and comment it again.
+      #- TRANGA_DISABLE_LOGIN=true
       # For websites behind Cloudflare; uncomment together with the flaresolverr service below
       #- FLARESOLVERR_URL=http://flaresolverr:8191
-      #- POSTGRES_COMMAND_TIMEOUT=30
-      #- POSTGRES_CONNECTION_TIMEOUT=30
-      #- CHECK_CHAPTERS_BEFORE_START=true
-      #- CREATE_COMICINFO_XML=true
     restart: unless-stopped
     logging:
       driver: json-file
@@ -61,9 +64,9 @@ services:
     image: postgres:17
     container_name: tranga-pg
     environment:
-      - POSTGRES_PASSWORD=postgres
       - POSTGRES_USER=postgres
-      - TZ=Europe/London
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}   # only used when the database is first created
+      - TZ=${TZ:-Europe/London}
     volumes:
       - ./postgres:/var/lib/postgresql/data   # keeps the database when the container is recreated
     healthcheck:
@@ -79,11 +82,58 @@ services:
         max-size: "10m"
         max-file: "5"
 
+  # Daily backup of the database and the settings folder into ./backups (kept for KEEP_DAYS days).
+  # A backup is also made when it starts, if the last one is older than 20 hours. Restore: see the README.
+  tranga-backup:
+    image: postgres:17
+    container_name: tranga-backup
+    depends_on:
+      tranga-pg:
+        condition: service_healthy
+    environment:
+      - PGHOST=tranga-pg
+      - PGUSER=postgres
+      - PGPASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - KEEP_DAYS=${BACKUP_KEEP_DAYS:-7}
+      - BACKUP_HOUR=${BACKUP_HOUR:-3}        # hour of the day (0–23) for the daily backup
+      - TZ=${TZ:-Europe/London}
+    volumes:
+      - ./backups:/backups
+      - ./settings:/settings:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        backup() {
+          stamp=$$(date +%Y-%m-%d_%H%M)
+          if pg_dump -Fc -f "/backups/.tranga-db-$$stamp.dump" postgres; then
+            mv "/backups/.tranga-db-$$stamp.dump" "/backups/tranga-db-$$stamp.dump"
+            echo "$$(date): database backed up to tranga-db-$$stamp.dump"
+          else
+            rm -f "/backups/.tranga-db-$$stamp.dump"
+            echo "$$(date): DATABASE BACKUP FAILED"
+          fi
+          tar -czf "/backups/tranga-settings-$$stamp.tar.gz" --exclude=./partial-downloads --exclude=./imageCache -C /settings . \
+            && echo "$$(date): settings backed up to tranga-settings-$$stamp.tar.gz"
+          find /backups -maxdepth 1 -name 'tranga-*' -mtime +$$KEEP_DAYS -delete
+        }
+        mkdir -p /backups
+        find /backups -maxdepth 1 -name 'tranga-db-*.dump' -mmin -1200 | grep -q . || backup
+        while true; do
+          sleep 3600
+          [ "$$(date +%H)" = "$$(printf %02d "$$BACKUP_HOUR")" ] && backup
+        done
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "1m"
+        max-file: "2"
+
   # Optional: solves Cloudflare checks for websites that need it
   #flaresolverr:
   #  image: ghcr.io/flaresolverr/flaresolverr:latest
   #  container_name: flaresolverr
   #  environment:
   #    - LOG_LEVEL=info
-  #    - TZ=Europe/London
+  #    - TZ=${TZ:-Europe/London}
   #  restart: unless-stopped

@@ -63,4 +63,8 @@
     <ItemGroup>
         <CompilerVisibleProperty Include="IncludeGitInformation" />
     </ItemGroup>
+    <ItemGroup>
+        <InternalsVisibleTo Include="Tests" />
+    </ItemGroup>
+
 </Project>

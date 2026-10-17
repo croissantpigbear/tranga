@@ -25,4 +25,8 @@ Tranga/Properties/launchSettings.json
 Manga/
 debug/
 cover.jpg
-cover.png.DS_Store
+cover.png
+backups/
+.env
+postgres/
+settings/

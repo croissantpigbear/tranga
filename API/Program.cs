@@ -145,6 +145,8 @@ ApiVersionSet apiVersionSet = app.NewApiVersionSet()
     .Build();
 
 app.UseCors("AllowAll");
+// Optional login (Settings → Login); does nothing while it's off
+API.Security.AuthMiddleware.UseOptionalLogin(app);
 
 log.Debug("Mapping Controllers...");
 app.MapControllers()

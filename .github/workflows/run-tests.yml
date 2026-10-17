@@ -2,6 +2,7 @@ name: Unit Tests
 
 on:
   push:
+  pull_request:
   workflow_dispatch:
 
 jobs:
@@ -17,7 +18,7 @@ jobs:
       - name: Set up .NET
         uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '9.x'
+          dotnet-version: '10.x'   # the API targets .NET 10 (this was 9.x, so the tests couldn't build)
 
       - name: Restore dependencies
         run: dotnet restore ./Tranga.sln
@@ -29,6 +30,7 @@ jobs:
         run: dotnet test ./Tests/Tests.csproj --configuration Release --no-build --logger "trx;LogFileName=TestResults.trx"
 
       - name: Upload test results
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: TestResults
