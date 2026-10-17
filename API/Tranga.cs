@@ -199,7 +199,11 @@ public static class Tranga
                     Log.DebugFormat("{0} created {1} new Workers.", worker, newWorkers.Length);
                     AddWorkers(newWorkers);
                 }else
-                    Log.WarnFormat("Children failed: {0}", worker);
+                {
+                    Exception? error = task.Exception?.GetBaseException();
+                    string reason = error is null ? "cancelled (took too long)" : $"{error.GetType().Name}: {error.Message}";
+                    Log.Warn($"Worker failed: {worker}: {reason}", error);
+                }
             }
             RunningWorkers.Remove(worker, out _);
         }

@@ -17,14 +17,36 @@ internal class HttpDownloadClient : IDownloadClient
     public async Task<HttpResponseMessage> MakeRequest(string url, RequestType requestType, string? referrer = null, CancellationToken? cancellationToken = null)
     {
         Log.DebugFormat("Using {0} for {1}", typeof(HttpDownloadClient).FullName, url);
-        HttpRequestMessage requestMessage = new(HttpMethod.Get, url);
-        if (referrer is not null)
-            requestMessage.Headers.Referrer = new (referrer);
+        HttpRequestMessage NewRequest()
+        {
+            HttpRequestMessage m = new(HttpMethod.Get, url);
+            if (referrer is not null)
+                m.Headers.Referrer = new (referrer);
+            return m;
+        }
+        HttpRequestMessage requestMessage = NewRequest();
         Log.DebugFormat("Requesting {0}", url);
         
         try
         {
-            HttpResponseMessage response = await Client.SendAsync(requestMessage, cancellationToken ?? CancellationToken.None);
+            HttpResponseMessage response;
+            for (int attempt = 1; ; attempt++)
+            {
+                try
+                {
+                    response = await Client.SendAsync(requestMessage, cancellationToken ?? CancellationToken.None);
+                    break;
+                }
+                catch (HttpRequestException e) when (attempt < 3 && e.StatusCode is null && e.InnerException is IOException
+                                                      && cancellationToken?.IsCancellationRequested != true)
+                {
+                    // The connection was dropped before an answer (e.g. "unexpected EOF" during TLS, "broken pipe"):
+                    // usually the site shedding a burst of requests, so wait a moment and try again on a new connection
+                    Log.Debug($"Connection to {requestMessage.RequestUri?.Host} dropped ({e.InnerException.Message}), retrying ({attempt}/2)");
+                    await Task.Delay(TimeSpan.FromSeconds(2 * attempt + Random.Shared.NextDouble() * 2), cancellationToken ?? CancellationToken.None);
+                    requestMessage = NewRequest();
+                }
+            }
             Log.DebugFormat("Request {0} returned {1} {2}", url, (int)response.StatusCode, response.StatusCode.ToString());
             if(response.IsSuccessStatusCode)
                 return response;
@@ -52,7 +74,7 @@ internal class HttpDownloadClient : IDownloadClient
         }
         catch (HttpRequestException e)
         {
-            Log.Error(e);
+            Log.Error($"{requestMessage.RequestUri?.Host}: {e.Message} {e.InnerException?.Message}");
             return new(HttpStatusCode.InternalServerError);
         }
     }
