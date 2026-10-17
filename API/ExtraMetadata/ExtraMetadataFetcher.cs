@@ -23,6 +23,13 @@ public class ExtraMetadataData
     public string? ContentRatingSource { get; set; }
     /// <summary>MangaDex id used for the content rating</summary>
     public string? MangaDexId { get; set; }
+    /// <summary>Series info from AniList, null if no confident match</summary>
+    public AniListData? AniList { get; set; }
+    /// <summary>Which sources were asked (older entries are fetched again once to add new sources)</summary>
+    public int Version { get; set; }
+
+    /// <summary>Current <see cref="Version"/>: 2 = MangaUpdates, MangaDex and AniList</summary>
+    public const int CurrentVersion = 2;
 }
 
 /// <summary>Subset of a MangaUpdates series (api.mangaupdates.com/v1/series/{id})</summary>
@@ -94,6 +101,7 @@ public static class ExtraMetadataFetcher
             if (wait > TimeSpan.Zero)
                 await Task.Delay(wait, ct);
             using HttpRequestMessage request = new(method, url);
+            request.Headers.Accept.ParseAdd("application/json");
             if (body is not null)
                 request.Content = new StringContent(JsonConvert.SerializeObject(body), Encoding.UTF8, "application/json");
             HttpResponseMessage response;
@@ -129,6 +137,13 @@ public static class ExtraMetadataFetcher
     private static Task<JToken?> MangaUpdates(HttpMethod method, string path, object? body, CancellationToken ct) =>
         Send(MangaUpdatesGate, () => _lastMangaUpdatesRequest, t => _lastMangaUpdatesRequest = t, TimeSpan.FromSeconds(1),
             method, $"https://api.mangaupdates.com/v1/{path}", body, ct);
+
+    private static readonly SemaphoreSlim AniListGate = new(1, 1);
+    private static DateTime _lastAniListRequest = DateTime.MinValue;
+
+    internal static Task<JToken?> AniList(string query, object variables, CancellationToken ct) =>
+        Send(AniListGate, () => _lastAniListRequest, t => _lastAniListRequest = t, TimeSpan.FromSeconds(2.5),
+            HttpMethod.Post, "https://graphql.anilist.co", new { query, variables }, ct);
 
     private static Task<JToken?> MangaDex(string path, CancellationToken ct) =>
         Send(MangaDexGate, () => _lastMangaDexRequest, t => _lastMangaDexRequest = t, TimeSpan.FromMilliseconds(300),
@@ -173,6 +188,37 @@ public static class ExtraMetadataFetcher
             }
         }
 
+        // Series info from AniList (fills in what the source website and MangaUpdates don't have)
+        // "Destiny Lovers (2020)" / "Destiny Lovers (2)": Tranga's name for a second series with the same title
+        string name = manga.Name;
+        int? yearInName = null;
+        if (Regex.Match(name, @"^(.+?) \((\d{4}|\d{1,2})\)$") is { Success: true } suffix)
+        {
+            name = suffix.Groups[1].Value;
+            if (suffix.Groups[2].Value.Length == 4)
+                yearInName = int.Parse(suffix.Groups[2].Value);
+        }
+        int? year = manga.Year is > 0 and < 10000 ? (int)manga.Year.Value
+            : yearInName ?? (int.TryParse(data.MangaUpdates?.StartYear ?? data.MangaUpdates?.Year, out int y) ? y : null);
+        // Tells apart e.g. a series and its adult version that share a title
+        bool? adult = MangaContext.EditionTags(manga.Name).Contains("r18") ? true
+            : data.ContentRating switch
+            {
+                "pornographic" or "erotica" => true,
+                "safe" or "suggestive" when data.ContentRatingSource == "MangaDex" => false,
+                _ => null
+            };
+        List<string> titles = [name, ..manga.AltTitles.Select(t => t.Title), ..data.MangaUpdates?.Associated ?? []];
+        if (data.MangaUpdates?.Title is { Length: > 0 } muTitle)
+            titles.Insert(1, muTitle);
+        data.AniList = await AniListFetcher.Find(manga, titles, year, adult, ct);
+        if (data.ContentRating is null && data.AniList?.IsAdult == true)
+        {
+            data.ContentRating = "pornographic";
+            data.ContentRatingSource = "AniList";
+        }
+
+        data.Version = ExtraMetadataData.CurrentVersion;
         return data;
     }
 
@@ -226,7 +272,7 @@ public static class ExtraMetadataFetcher
 
     private static string Decode(string? s) => WebUtility.HtmlDecode(s ?? "").Trim();
 
-    private static string Normalise(string s)
+    internal static string Normalise(string s)
     {
         string decomposed = Decode(s).ToLowerInvariant().Normalize(NormalizationForm.FormD);
         StringBuilder sb = new();

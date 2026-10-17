@@ -27,6 +27,7 @@ public static class ComicInfoBuilder
     public static string Build(Chapter chapter, Manga manga, ExtraMetadataData? extra, int? pageCount, string? sourceName)
     {
         MangaUpdatesData? mu = extra?.MangaUpdates;
+        AniListData? al = extra?.AniList;
         XElement root = new("ComicInfo",
             new XAttribute(XNamespace.Xmlns + "xsd", "http://www.w3.org/2001/XMLSchema"),
             new XAttribute(XNamespace.Xmlns + "xsi", "http://www.w3.org/2001/XMLSchema-instance"));
@@ -48,25 +49,31 @@ public static class ComicInfoBuilder
         Add("Title", string.IsNullOrWhiteSpace(chapter.Title) ? null : chapter.Title);
         Add("Series", manga.Name);
         Add("Number", chapter.ChapterNumber);
-        Add("Count", TotalCount(mu));
+        Add("Count", TotalCount(mu, al));
         Add("Volume", chapter.VolumeNumber);
         Add("Summary", manga.Description);
-        Add("Notes", Notes(mu, sourceName));
-        Add("Year", Year(manga, mu));
-        Add("Writer", Join(mu?.Writers is { Count: > 0 } w ? w : manga.Authors.Select(a => a.AuthorName)));
-        Add("Penciller", Join(mu?.Artists ?? Enumerable.Empty<string>()));
+        Add("Notes", Notes(mu, al, sourceName));
+        Add("Year", Year(manga, mu, al));
+        Add("Writer", Join(mu?.Writers is { Count: > 0 } w ? w
+            : al?.Writers is { Count: > 0 } aw ? aw
+            : manga.Authors.Select(a => a.AuthorName)));
+        Add("Penciller", Join(mu?.Artists is { Count: > 0 } pa ? pa : al?.Artists ?? Enumerable.Empty<string>()));
         Add("Publisher", Join(mu?.OriginalPublishers ?? Enumerable.Empty<string>()));
         Add("Imprint", Join(mu?.Publications ?? Enumerable.Empty<string>())); // the magazine it runs in
-        Add("Genre", Join(mu?.Genres is { Count: > 0 } g ? g : manga.MangaTags.Select(t => t.Tag)));
-        Add("Web", Join(WebLinks(manga, mu)));
+        Add("Genre", Join(mu?.Genres is { Count: > 0 } g ? g
+            : al?.Genres is { Count: > 0 } ag ? ag
+            : manga.MangaTags.Select(t => t.Tag)));
+        Add("Web", Join(WebLinks(manga, mu, al)));
         Add("PageCount", pageCount is > 0 ? pageCount : null);
         Add("LanguageISO", Tranga.Settings.DownloadLanguage);
         Add("BlackAndWhite", Tranga.Settings.BlackWhiteImages ? "Yes" : null);
         Add("Manga", ReadingDirection(manga.OriginalLanguage));
         Add("ScanInformation", sourceName);
-        Add("AgeRating", AgeRating(extra?.ContentRating, mu?.Genres));
+        Add("AgeRating", AgeRating(extra?.ContentRating, (mu?.Genres ?? []).Concat(al?.Genres ?? [])));
         if (mu?.Rating is { } rating and > 0)
             Add("CommunityRating", Math.Round(Math.Clamp(rating / 2, 0, 5), 2));
+        else if (al?.AverageScore is { } score and > 0)
+            Add("CommunityRating", Math.Round(Math.Clamp(score / 20.0, 0, 5), 2));
 
         // Not in the schema, but read by Kavita (and partly Komga)
         Add("LocalizedSeries", NamingFormatter.EnglishTitle(manga));
@@ -80,35 +87,42 @@ public static class ComicInfoBuilder
         return sb.ToString();
     }
 
-    /// <summary>Total chapters, only when MangaUpdates says the series is complete (Kavita then marks it finished)</summary>
-    private static long? TotalCount(MangaUpdatesData? mu) => mu is { Completed: true, LatestChapter: > 0 } ? mu.LatestChapter : null;
+    /// <summary>Total chapters, only when MangaUpdates or AniList says the series is complete (Kavita then marks it finished)</summary>
+    private static long? TotalCount(MangaUpdatesData? mu, AniListData? al) =>
+        mu is { Completed: true, LatestChapter: > 0 } ? mu.LatestChapter
+        : al is { Status: "FINISHED", Chapters: > 0 } ? al.Chapters
+        : null;
 
-    private static string Notes(MangaUpdatesData? mu, string? sourceName)
+    private static string Notes(MangaUpdatesData? mu, AniListData? al, string? sourceName)
     {
         List<string> parts = ["Created by Tranga."];
         if (sourceName is not null)
             parts.Add($"Downloaded from {sourceName}.");
         if (mu is not null)
             parts.Add($"Series details from MangaUpdates ({mu.Url}).");
+        if (al is not null)
+            parts.Add($"Series details from AniList ({al.Url}).");
         return string.Join(' ', parts);
     }
 
-    private static int? Year(Manga manga, MangaUpdatesData? mu)
+    private static int? Year(Manga manga, MangaUpdatesData? mu, AniListData? al)
     {
         if (manga.Year is > 0 and < 10000)
             return (int)manga.Year.Value;
         foreach (string? s in new[] { mu?.StartYear, mu?.Year })
             if (int.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out int y) && y is > 1800 and < 3000)
                 return y;
-        return null;
+        return al?.StartYear is > 1800 and < 3000 ? al.StartYear : null;
     }
 
-    private static IEnumerable<string> WebLinks(Manga manga, MangaUpdatesData? mu)
+    private static IEnumerable<string> WebLinks(Manga manga, MangaUpdatesData? mu, AniListData? al)
     {
         List<string> links = manga.Links
             .Select(l => l.LinkUrl)
             .Where(u => Uri.TryCreate(u, UriKind.Absolute, out Uri? uri) && uri.Scheme is "http" or "https")
             .ToList();
+        if (al is not null && !string.IsNullOrEmpty(al.Url))
+            links.Insert(0, al.Url);
         if (mu is not null && !string.IsNullOrEmpty(mu.Url))
             links.Insert(0, mu.Url);
         // Kavita splits on commas, so a URL containing one would break

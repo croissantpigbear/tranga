@@ -43,7 +43,11 @@ public class FillExtraMetadataWorker(TimeSpan? interval = null, IEnumerable<Base
             .Select(id => id.ObjId)
             .Distinct()
             .ToListAsync(CancellationToken);
-        HashSet<string> stored = (await ExtraMetadataContext.Entries.Select(e => e.MangaId).ToListAsync(CancellationToken)).ToHashSet();
+        // Stored details from before AniList was added count as missing (fetched again once)
+        HashSet<string> stored = (await ExtraMetadataContext.Entries.AsNoTracking().Select(e => new { e.MangaId, e.Data }).ToListAsync(CancellationToken))
+            .Where(e => ExtraMetadataStore.Parse(e.Data) is { Version: >= ExtraMetadataData.CurrentVersion })
+            .Select(e => e.MangaId)
+            .ToHashSet();
         List<string> missing = library.Where(id => !stored.Contains(id)).ToList();
         if (missing.Count == 0)
             return [];
@@ -58,7 +62,7 @@ public class FillExtraMetadataWorker(TimeSpan? interval = null, IEnumerable<Base
             if (DateTime.UtcNow > stopAt || CancellationToken.IsCancellationRequested)
                 break;
             ExtraMetadataStore.Result result =
-                await ExtraMetadataStore.FetchAndStore(MangaContext, ExtraMetadataContext, mangaId, false, CancellationToken);
+                await ExtraMetadataStore.FetchAndStore(MangaContext, ExtraMetadataContext, mangaId, true, CancellationToken);
             if (result == ExtraMetadataStore.Result.SourceUnavailable)
                 break; // MangaUpdates/MangaDex down: try again next run
             if (result == ExtraMetadataStore.Result.Stored)
