@@ -53,6 +53,7 @@ public static class Tranga
 
     internal static void StartupTasks()
     {
+        API.Scheduling.TaskSchedules.Apply();
         AddWorker(SendNotificationsWorker);
         AddWorker(CleanupMangaconnectorIdsWithoutConnector);
         AddWorker(CleanupMangaCoversWorker);
@@ -70,6 +71,7 @@ public static class Tranga
 
     internal static void AddDefaultWorkers()
     {
+        API.Scheduling.TaskSchedules.Apply();
         AddWorker(UpdateMetadataWorker);
         AddWorker(CheckForNewChaptersWorker);
         AddWorker(StartNewChapterDownloadsWorker);
@@ -115,7 +117,10 @@ public static class Tranga
     private static Task RefreshedPeriodicTask(BaseWorker worker, IPeriodic periodic) => new (() =>
     {
         Log.DebugFormat("Waiting {0} for next run of {1}", periodic.Interval, worker);
-        Thread.Sleep(periodic.Interval);
+        // Waits in short steps so a changed interval (Settings → Schedules) or "Run now" applies straight away
+        DateTime waitingSince = DateTime.UtcNow;
+        while (DateTime.UtcNow < waitingSince + periodic.Interval && !API.Scheduling.TaskSchedules.TakeRunNow(periodic))
+            Thread.Sleep(TimeSpan.FromSeconds(Math.Min(5, Math.Max(1, periodic.Interval.TotalSeconds))));
         StartWorker(worker, RefreshTask(worker, periodic));
     });
 
