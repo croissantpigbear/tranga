@@ -20,6 +20,9 @@ public abstract class MangaConnector(string name, string[] supportedLanguages, s
     [StringLength(2048)] public string IconUrl { get; init; } = iconUrl;
     [StringLength(256)] public string[] BaseUris { get; init; } = baseUris;
     public bool Enabled { get; internal set; } = true;
+
+    /// <summary>Most chapters this website allows downloading at once (0: no limit of its own, use Tranga's setting)</summary>
+    [NotMapped] public virtual int MaxConcurrentDownloads => 0;
     
     public abstract (Manga, MangaConnectorId<Manga>)[] SearchManga(string mangaSearchName);
 

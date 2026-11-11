@@ -8,7 +8,7 @@ namespace API.LuaModules;
 
 /// <summary>What an FMD2 module registered in Init()</summary>
 internal sealed record LuaModuleMeta(string Id, string Name, string RootUrl, string Category, string OnGetInfo, string OnGetPageNumber,
-    string OnGetNameAndLink, string OnBeforeDownloadImage, bool AccountSupport);
+    string OnGetNameAndLink, string OnBeforeDownloadImage, bool AccountSupport, int MaxTaskLimit = 0);
 
 /// <summary>Kind of uploaded Lua file</summary>
 public enum LuaFileKind { Module, Template, Helper }
@@ -187,7 +187,8 @@ public static class LuaModuleStore
                 continue;
             result.Add(new LuaModuleMeta(id, m["name"]?.ToString() ?? id, rootUrl, m["category"]?.ToString() ?? "",
                 m["onGetInfo"]?.ToString() ?? "", m["onGetPageNumber"]?.ToString() ?? "", m["onGetNameAndLink"]?.ToString() ?? "",
-                m["onBeforeDownloadImage"]?.ToString() ?? "", m["accountSupport"]?.Value<bool>() ?? false));
+                m["onBeforeDownloadImage"]?.ToString() ?? "", m["accountSupport"]?.Value<bool>() ?? false,
+                int.TryParse(m["maxTaskLimit"]?.ToString(), out int maxTasks) ? Math.Max(0, maxTasks) : 0));
         }
         return result;
     }

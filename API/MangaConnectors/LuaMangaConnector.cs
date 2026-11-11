@@ -39,7 +39,13 @@ public class LuaMangaConnector : MangaConnector
         ModuleName = meta.Name;
         HasTitleList = meta.OnGetNameAndLink.Length > 0;
         HasImageHeaders = meta.OnBeforeDownloadImage.Length > 0;
+        _maxTasks = meta.MaxTaskLimit;
     }
+
+    private readonly int _maxTasks;
+
+    /// <summary>The module's own limit (FMD2 MaxTaskLimit, e.g. Weeb Central: 2); 0 if it sets none</summary>
+    public override int MaxConcurrentDownloads => _maxTasks;
 
     private static string[] BaseUrisOf(string rootUrl)
     {

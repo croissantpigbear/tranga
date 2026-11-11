@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using API.Downloads;
+using API.MangaConnectors;
 using API.Schema.MangaContext;
 using API.Workers.MangaDownloadWorkers;
 using Microsoft.EntityFrameworkCore;
@@ -84,7 +85,12 @@ public class StartNewChapterDownloadsWorker(TimeSpan? interval = null, IEnumerab
             if (newDownloadChapters.Count >= amountNewWorkers)
                 break;
             int already = perConnectorRunning.GetValueOrDefault(ch.MangaConnectorName);
-            if (already >= perConnector)
+            // A website module can ask for fewer at once (e.g. Weeb Central: 2) than the setting allows
+            int limit = Tranga.TryGetMangaConnector(ch.MangaConnectorName, out MangaConnector? connector)
+                        && connector.MaxConcurrentDownloads > 0
+                ? Math.Min(perConnector, connector.MaxConcurrentDownloads)
+                : perConnector;
+            if (already >= limit)
                 continue; // this website is busy; try chapters from other websites
             perConnectorRunning[ch.MangaConnectorName] = already + 1;
             newDownloadChapters.Add(ch);

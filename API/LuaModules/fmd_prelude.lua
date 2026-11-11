@@ -712,7 +712,8 @@ function __fmd_init()
 			onGetInfo = str(m.OnGetInfo), onGetPageNumber = str(m.OnGetPageNumber), onGetImageURL = str(m.OnGetImageURL),
 			onGetNameAndLink = str(m.OnGetNameAndLink), onGetDirectoryPageNumber = str(m.OnGetDirectoryPageNumber),
 			onBeforeDownloadImage = str(m.OnBeforeDownloadImage), onDownloadImage = str(m.OnDownloadImage),
-			onLogin = str(m.OnLogin), onTaskStart = str(m.OnTaskStart), options = options
+			onLogin = str(m.OnLogin), onTaskStart = str(m.OnTaskStart), options = options,
+			maxTaskLimit = tonumber(m.MaxTaskLimit) or 0
 		}
 	end
 	return json.encode(out)
