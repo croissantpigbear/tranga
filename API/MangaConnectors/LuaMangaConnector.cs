@@ -141,6 +141,12 @@ public class LuaMangaConnector : MangaConnector
             .Distinct().Take(20)
             .Select(t => new AltTitle("un", t)).ToList();
         string cover = info.CoverLink.Length > 0 ? Absolute(info.CoverLink) : "";
+        // The module found no usable cover (e.g. the site moved it into a <picture> tag): look on the page ourselves
+        if (AbsoluteUrl(cover, Absolute(url), BaseUris) is null && CoverFromPage(Absolute(url)) is { } found)
+        {
+            Log.Debug($"{Name}: module gave no cover for {url}, using {found} from the page");
+            cover = found;
+        }
         string description = System.Net.WebUtility.HtmlDecode(info.Summary).Trim();
 
         Manga manga = new(name, description, cover, status, authors, tags, [], altTitles);
@@ -151,6 +157,56 @@ public class LuaMangaConnector : MangaConnector
         MangaConnectorId<Manga> mcId = new(manga, this, id, website.Length <= 512 ? website : null);
         manga.MangaConnectorIds.Add(mcId);
         return (manga, mcId);
+    }
+
+    /// <summary>
+    /// A cover picture on a series page: an image inside an element whose class has "cover", else the page's
+    /// og:image / twitter:image. Prefers .jpg/.png/.webp over .avif (which Tranga can't read). Null if there's none.
+    /// </summary>
+    internal override string? FindCoverOnPage(string pageUrl) => CoverFromPage(pageUrl);
+
+    private string? CoverFromPage(string pageUrl)
+    {
+        try
+        {
+            HttpResponseMessage response = downloadClient.MakeRequest(pageUrl, RequestType.MangaInfo).Result;
+            if (!response.IsSuccessStatusCode)
+                return null;
+            return CoverFromHtml(response.Content.ReadAsStringAsync().Result, pageUrl, BaseUris);
+        }
+        catch (Exception e)
+        {
+            Log.Debug($"{Name}: couldn't look for a cover on {pageUrl}: {e.GetBaseException().Message}");
+            return null;
+        }
+    }
+
+    internal static string? CoverFromHtml(string html, string pageUrl, string[] baseUris)
+    {
+        HtmlAgilityPack.HtmlDocument doc = new();
+        doc.LoadHtml(html);
+        List<string> found = [];
+        HtmlAgilityPack.HtmlNodeCollection? imgs = doc.DocumentNode.SelectNodes(
+            "//*[contains(translate(@class,'COVER','cover'),'cover')]//img | //img[contains(translate(@class,'COVER','cover'),'cover')]");
+        foreach (HtmlAgilityPack.HtmlNode img in imgs ?? Enumerable.Empty<HtmlAgilityPack.HtmlNode>())
+        {
+            foreach (string attr in new[] { "data-src", "data-lazy-src", "data-original", "src" })
+                if (img.GetAttributeValue(attr, "") is { Length: > 0 } v && !v.StartsWith("data:"))
+                    found.Add(System.Net.WebUtility.HtmlDecode(v));
+            // <picture><source srcset="…">
+            foreach (HtmlAgilityPack.HtmlNode source in img.ParentNode?.SelectNodes("source") ?? Enumerable.Empty<HtmlAgilityPack.HtmlNode>())
+                if (source.GetAttributeValue("srcset", "").Split(',')[0].Trim().Split(' ')[0] is { Length: > 0 } v)
+                    found.Add(System.Net.WebUtility.HtmlDecode(v));
+        }
+        foreach (string meta in new[] { "//meta[@property='og:image']", "//meta[@name='twitter:image']" })
+            if (doc.DocumentNode.SelectSingleNode(meta)?.GetAttributeValue("content", "") is { Length: > 0 } v)
+                found.Add(System.Net.WebUtility.HtmlDecode(v));
+
+        return found
+            .Select(f => AbsoluteUrl(f, pageUrl, baseUris))
+            .OfType<string>()
+            .OrderBy(f => f.Split('?')[0].EndsWith(".avif", StringComparison.OrdinalIgnoreCase) ? 1 : 0)
+            .FirstOrDefault();
     }
 
     private static IEnumerable<string> SplitList(string s) =>

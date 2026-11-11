@@ -60,70 +60,105 @@ public abstract class MangaConnector(string name, string[] supportedLanguages, s
             : null;
     }
 
+    /// <summary>A cover picture on a series page (for websites whose own cover link is missing); null if not supported</summary>
+    internal virtual string? FindCoverOnPage(string pageUrl) => null;
+
     internal string? SaveCoverImageToCache(MangaConnectorId<Manga> mangaId, int retries = 3)
     {
         if(retries < 0)
             return null;
 
-        if (AbsoluteUrl(mangaId.Obj.CoverUrl, mangaId.WebsiteUrl, BaseUris) is not { } coverUrl)
+        // A saved link that isn't usable (e.g. empty because the module missed it): look on the series page instead
+        string? coverUrl = AbsoluteUrl(mangaId.Obj.CoverUrl, mangaId.WebsiteUrl, BaseUris);
+        if (coverUrl is null && mangaId.WebsiteUrl is { Length: > 0 } page)
+            coverUrl = FindCoverOnPage(page);
+        if (coverUrl is null)
         {
             Log.Warn($"{Name}: the cover link of {mangaId.Obj.Name} isn't a web address (\"{mangaId.Obj.CoverUrl}\"); no cover.");
             return null;
         }
         Uri coverUri = new(coverUrl);
         string extension = Path.GetExtension(coverUri.AbsolutePath).TrimStart('.').ToLowerInvariant();
-        if (extension.Length is 0 or > 5)
+        if (extension.Length is 0 or > 5 || extension == "avif")
             extension = "jpg";
-        string filename = $"{coverUri.Host}-{mangaId.ObjId}.{mangaId.MangaConnectorName}.{extension}";
+        string filename = $"{coverUri.Host}-{mangaId.ObjId}.{mangaId.MangaConnectorName}.{extension}".CleanNameForWindows();
         string saveImagePath = Path.Join(TrangaSettings.CoverImageCacheOriginal, filename);
 
         if (File.Exists(saveImagePath))
             return filename;
 
-        HttpResponseMessage coverResult;
-        try
-        {
-            coverResult = downloadClient.MakeRequest(coverUrl, RequestType.MangaCover, $"{coverUri.Scheme}://{coverUri.Host}").Result;
-        }
-        catch (Exception e)
-        {
-            Log.Warn($"{Name}: couldn't download the cover of {mangaId.Obj.Name} ({e.GetBaseException().Message}).");
-            return null;
-        }
-        if ((int)coverResult.StatusCode < 200 || (int)coverResult.StatusCode >= 300)
-            return SaveCoverImageToCache(mangaId, retries - 1);
-            
-        try
-        {
-            using MemoryStream ms = new();
-            coverResult.Content.ReadAsStream().CopyTo(ms);
-            byte[] imageBytes = ms.ToArray();
-            Directory.CreateDirectory(TrangaSettings.CoverImageCacheOriginal);
-            File.WriteAllBytes(saveImagePath, imageBytes);
+        // Tranga can't read AVIF images, so for a ….avif cover try the same picture as .jpg / .webp first (sites that
+        // offer AVIF usually keep those next to it)
+        List<string> candidates = [];
+        if (coverUri.AbsolutePath.EndsWith(".avif", StringComparison.OrdinalIgnoreCase))
+            foreach (string ext in new[] { ".jpg", ".webp", ".png" })
+                candidates.Add(new UriBuilder(coverUri) { Path = coverUri.AbsolutePath[..^5] + ext }.Uri.ToString());
+        candidates.Add(coverUrl);
 
-            using Image image = Image.Load(imageBytes);
-            Directory.CreateDirectory(TrangaSettings.CoverImageCacheLarge);
-            using Image large = image.Clone(x => x.Resize(new ResizeOptions
-                { Size = Constants.ImageLgSize, Mode = ResizeMode.Max }));
-            large.SaveAsJpeg(Path.Join(TrangaSettings.CoverImageCacheLarge, filename), new (){ Quality = 40 });
-            
-            Directory.CreateDirectory(TrangaSettings.CoverImageCacheMedium);
-            using Image medium = image.Clone(x => x.Resize(new ResizeOptions
-                { Size = Constants.ImageMdSize, Mode = ResizeMode.Max }));
-            medium.SaveAsJpeg(Path.Join(TrangaSettings.CoverImageCacheMedium, filename), new (){ Quality = 40 });
-            
-            Directory.CreateDirectory(TrangaSettings.CoverImageCacheSmall);
-            using Image small = image.Clone(x => x.Resize(new ResizeOptions
-                { Size = Constants.ImageSmSize, Mode = ResizeMode.Max }));
-            small.SaveAsJpeg(Path.Join(TrangaSettings.CoverImageCacheSmall, filename), new (){ Quality = 40 });
-        }
-        catch (Exception e)
+        string? lastProblem = null;
+        foreach (string candidate in candidates)
         {
-            Log.Error(e);
+            byte[]? imageBytes = null;
+            for (int attempt = 0; attempt <= Math.Max(0, retries) && imageBytes is null; attempt++)
+            {
+                try
+                {
+                    HttpResponseMessage coverResult = downloadClient
+                        .MakeRequest(candidate, RequestType.MangaCover, $"{coverUri.Scheme}://{coverUri.Host}/").Result;
+                    if (!coverResult.IsSuccessStatusCode)
+                    {
+                        lastProblem = $"{(int)coverResult.StatusCode} from {candidate}";
+                        if ((int)coverResult.StatusCode is 404 or 410)
+                            break; // that version doesn't exist; try the next
+                        continue;
+                    }
+                    using MemoryStream ms = new();
+                    coverResult.Content.ReadAsStream().CopyTo(ms);
+                    imageBytes = ms.ToArray();
+                }
+                catch (Exception e)
+                {
+                    lastProblem = e.GetBaseException().Message;
+                }
+            }
+            if (imageBytes is null)
+                continue;
+
+            try
+            {
+                using Image image = Image.Load(imageBytes);
+                Directory.CreateDirectory(TrangaSettings.CoverImageCacheOriginal);
+                File.WriteAllBytes(saveImagePath, imageBytes);
+
+                Directory.CreateDirectory(TrangaSettings.CoverImageCacheLarge);
+                using Image large = image.Clone(x => x.Resize(new ResizeOptions
+                    { Size = Constants.ImageLgSize, Mode = ResizeMode.Max }));
+                large.SaveAsJpeg(Path.Join(TrangaSettings.CoverImageCacheLarge, filename), new (){ Quality = 40 });
+
+                Directory.CreateDirectory(TrangaSettings.CoverImageCacheMedium);
+                using Image medium = image.Clone(x => x.Resize(new ResizeOptions
+                    { Size = Constants.ImageMdSize, Mode = ResizeMode.Max }));
+                medium.SaveAsJpeg(Path.Join(TrangaSettings.CoverImageCacheMedium, filename), new (){ Quality = 40 });
+
+                Directory.CreateDirectory(TrangaSettings.CoverImageCacheSmall);
+                using Image small = image.Clone(x => x.Resize(new ResizeOptions
+                    { Size = Constants.ImageSmSize, Mode = ResizeMode.Max }));
+                small.SaveAsJpeg(Path.Join(TrangaSettings.CoverImageCacheSmall, filename), new (){ Quality = 40 });
+                return filename;
+            }
+            catch (Exception e) when (e is UnknownImageFormatException or InvalidImageContentException or NotSupportedException)
+            {
+                // e.g. an AVIF picture: not kept, so it isn't mistaken for a cover later
+                lastProblem = $"{candidate} isn't an image Tranga can read ({e.Message})";
+            }
+            catch (Exception e)
+            {
+                lastProblem = e.Message;
+            }
         }
 
-
-        return filename.CleanNameForWindows();
+        Log.Warn($"{Name}: couldn't get a cover for {mangaId.Obj.Name}: {lastProblem}");
+        return null;
     }
     
     public virtual async Task<Stream?> DownloadImage(string imageUrl, CancellationToken ct)
