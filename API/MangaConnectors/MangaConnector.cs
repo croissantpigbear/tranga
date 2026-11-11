@@ -34,21 +34,62 @@ public abstract class MangaConnector(string name, string[] supportedLanguages, s
 
     public bool UrlMatchesConnector(string url) => BaseUris.Any(baseUri => Regex.IsMatch(url, "https?://" + baseUri + "/.*"));
     
+    /// <summary>
+    /// A cover link as a full address: websites (and FMD2 modules) sometimes give "//cdn.site/x.jpg" or "/img/x.jpg".
+    /// Those are completed from the series' page on the website (or the website's address). Null if it can't be.
+    /// </summary>
+    internal static string? AbsoluteUrl(string? url, string? pageUrl, IEnumerable<string> baseUris)
+    {
+        url = url?.Trim();
+        if (string.IsNullOrEmpty(url))
+            return null;
+        if (Uri.TryCreate(url, UriKind.Absolute, out Uri? abs) && abs.Scheme is "http" or "https" && abs.Host.Length > 0)
+            return abs.ToString();
+        if (url.StartsWith("//"))
+            return Uri.TryCreate("https:" + url, UriKind.Absolute, out Uri? p) && p.Host.Length > 0 ? p.ToString() : null;
+        string? site = pageUrl is not null && Uri.TryCreate(pageUrl, UriKind.Absolute, out Uri? page) && page.Scheme is "http" or "https"
+            ? page.ToString()
+            : baseUris.Select(b => $"https://{b.Trim('/')}/").FirstOrDefault(b => Uri.TryCreate(b, UriKind.Absolute, out _));
+        if (site is null)
+            return null;
+        Uri siteUri = new(site);
+        // "/img/x.jpg" is built by hand: on Linux .NET would read it as a file path
+        string joined = url.StartsWith('/') ? $"{siteUri.Scheme}://{siteUri.Authority}{url}" : new Uri(siteUri, url).ToString();
+        return Uri.TryCreate(joined, UriKind.Absolute, out Uri? combined) && combined.Scheme is "http" or "https" && combined.Host.Length > 0
+            ? combined.ToString()
+            : null;
+    }
+
     internal string? SaveCoverImageToCache(MangaConnectorId<Manga> mangaId, int retries = 3)
     {
         if(retries < 0)
             return null;
-        
-        Regex urlRex = new (@"https?:\/\/((?:[a-zA-Z0-9-]+\.)+[a-zA-Z0-9]+)\/(?:.+\/)*(.+\.([a-zA-Z]+))");
-        //https?:\/\/[a-zA-Z0-9-]+\.([a-zA-Z0-9-]+\.[a-zA-Z0-9]+)\/(?:.+\/)*(.+\.([a-zA-Z]+)) for only second level domains
-        Match match = urlRex.Match(mangaId.Obj.CoverUrl);
-        string filename = $"{match.Groups[1].Value}-{mangaId.ObjId}.{mangaId.MangaConnectorName}.{match.Groups[3].Value}";
+
+        if (AbsoluteUrl(mangaId.Obj.CoverUrl, mangaId.WebsiteUrl, BaseUris) is not { } coverUrl)
+        {
+            Log.Warn($"{Name}: the cover link of {mangaId.Obj.Name} isn't a web address (\"{mangaId.Obj.CoverUrl}\"); no cover.");
+            return null;
+        }
+        Uri coverUri = new(coverUrl);
+        string extension = Path.GetExtension(coverUri.AbsolutePath).TrimStart('.').ToLowerInvariant();
+        if (extension.Length is 0 or > 5)
+            extension = "jpg";
+        string filename = $"{coverUri.Host}-{mangaId.ObjId}.{mangaId.MangaConnectorName}.{extension}";
         string saveImagePath = Path.Join(TrangaSettings.CoverImageCacheOriginal, filename);
 
         if (File.Exists(saveImagePath))
             return filename;
-        
-        HttpResponseMessage coverResult = downloadClient.MakeRequest(mangaId.Obj.CoverUrl, RequestType.MangaCover, $"https://{match.Groups[1].Value}").Result;
+
+        HttpResponseMessage coverResult;
+        try
+        {
+            coverResult = downloadClient.MakeRequest(coverUrl, RequestType.MangaCover, $"{coverUri.Scheme}://{coverUri.Host}").Result;
+        }
+        catch (Exception e)
+        {
+            Log.Warn($"{Name}: couldn't download the cover of {mangaId.Obj.Name} ({e.GetBaseException().Message}).");
+            return null;
+        }
         if ((int)coverResult.StatusCode < 200 || (int)coverResult.StatusCode >= 300)
             return SaveCoverImageToCache(mangaId, retries - 1);
             

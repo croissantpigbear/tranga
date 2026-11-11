@@ -363,7 +363,15 @@ public class DownloadChapterFromMangaconnectorWorker(MangaConnectorId<Chapter> c
             return [];
         }
         
-        await CopyCoverFromCacheToDownloadLocation(chapter.ParentManga);
+        // A missing cover never stops a chapter
+        try
+        {
+            await CopyCoverFromCacheToDownloadLocation(chapter.ParentManga);
+        }
+        catch (Exception e)
+        {
+            Log.Warn($"Couldn't put the cover of {chapter.ParentManga.Name} in its folder ({e.GetBaseException().Message}); the chapter is saved without it.");
+        }
         
         Log.Debug($"Loading collections {chapter}");
         await LoadMangaDetails(chapter.ParentManga);
