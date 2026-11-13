@@ -96,8 +96,7 @@ Tranga-Plus is three small programs (called *containers*) that Docker runs toget
 |---|---|
 | `tranga-website` | The website you open in your browser (port **9555**) |
 | `tranga-api` | Does the work: searching, downloading, checking for new chapters |
-| `tranga-pg` | The database (PostgreSQL) |
-| `tranga-backup` | Makes a backup of the database and settings every night |
+| `tranga-pg` | The database (PostgreSQL). It also makes a backup of the database and settings every night. |
 
 You don't have to build anything: ready-made images are downloaded from GitHub (`ghcr.io/croissantpigbear/...`).
 
@@ -158,7 +157,7 @@ The first start takes a minute or two while the database is set up. Check everyt
 docker compose ps
 ```
 
-All four containers should say `running` (the database also shows `healthy`).
+All three containers should say `running` (the database also shows `healthy`).
 
 ### Step 5: Open the website
 
@@ -223,6 +222,16 @@ Click **Compose Up**. When it says it's done, open **`http://<your-unraid-ip>:95
 
 Continue with [First steps in the website](#first-steps-in-the-website). When you add a download folder there, use
 **`/Manga`**, not `/mnt/user/Manga`.
+
+### Optional: tidy up the Docker page
+
+The Unraid compose file gives each container a Tranga-Plus icon, and the website a **WebUI** link in its menu.
+To fold all three into one row:
+
+1. **Apps** tab → search **Folder View** → **Install**.
+2. **Docker** tab → **Add Folder** (at the bottom) → name it `Tranga-Plus`.
+3. Pick `tranga-website`, `tranga-api` and `tranga-pg`, and paste this as the folder icon:
+   `https://raw.githubusercontent.com/croissantpigbear/tranga/tranga-plus/assets/unraid/tranga-plus.png`
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -309,6 +318,10 @@ the API starts.
 > When a new version changes the compose file (a new container or folder, for example), the release notes will say so.
 > Download the new `docker-compose.yaml` (or `docker-compose.unraid.yml`) and replace yours, keeping your `.env`.
 
+> **From 4 containers to 3 (November 2026):** the nightly backup moved into `tranga-pg`, so the separate `tranga-backup`
+> container is no longer needed. After replacing the compose file, remove the old one:
+> `docker compose up -d --remove-orphans` (Unraid: `docker rm -f tranga-backup` in the terminal, then **Compose Up**).
+
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ---
@@ -317,7 +330,7 @@ the API starts.
 
 ### Automatic daily backups
 
-The `tranga-backup` container saves, every night at `BACKUP_HOUR` (default 3am), into the `backups` folder:
+The database container (`tranga-pg`) saves, every night at `BACKUP_HOUR` (default 3am), into the `backups` folder:
 
 - `tranga-db-<date>.dump`: the whole database (your series, chapters, libraries, connections)
 - `tranga-settings-<date>.tar.gz`: the settings folder (settings, FMD2 modules, login, schedules)
@@ -426,7 +439,7 @@ Activity → Logs → **Download** saves the log to a file you can share when as
 | A website returns 403 / Cloudflare errors | Add FlareSolverr: uncomment the `flaresolverr` service and `FLARESOLVERR_URL` in the compose file, then `docker compose up -d`. |
 | Search finds nothing on an FMD2 site | Use **Test** on the More websites page with a manga link. Some sites need their **title list** built first (button on the same page). Or paste the manga's link in the search box instead. |
 | Kavita doesn't show new chapters or covers | Kavita's library must point to the same real folder. Check the connection in Settings → Libraries (**Test**). |
-| Settings → Maintenance says "No backup folder is connected" | You're using an old compose file. Get the new one (it has the `tranga-backup` service and the `backups` folder). |
+| Settings → Maintenance says "No backup folder is connected" | You're using an old compose file. Get the new one (it has the `backups` folder). Backup messages are in the `tranga-pg` log: `docker logs tranga-pg \| grep backup`. |
 | "Max worker concurrency reached" in the log | Normal: Tranga is busy and jobs wait their turn. Raise the limit in Settings → Performance if your computer can handle it. |
 | Locked out of the login | See [Forgot your password?](#switch-the-login-on) |
 
