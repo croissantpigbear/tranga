@@ -64,6 +64,7 @@ Gotify/Ntfy/Pushover/webhooks), plus:
 
 **Your library**
 - **Import existing folders:** add series you already have on disk. Tranga recognises the chapters that are already there and only downloads the missing ones.
+- **Series list (CSV):** export every series to a spreadsheet, and **add many series at once** from a list: links, titles, or a list exported from another Tranga.
 - **Same name, different series:** "Title" and "Title [R18]", coloured editions, or two different series with exactly the same name are kept apart, each in its own folder.
 - **Release calendar:** new chapters by day, and when each series' next chapter is likely.
 - Delete single chapter files, see file sizes and disk use, rename series folders with a naming scheme.
@@ -293,6 +294,7 @@ then add the matching result. The chapters already in the folder count as downlo
 | Get notifications on my phone | **Settings → Notifications** |
 | Protect it with a password | **Settings → Login** |
 | Back up or move my settings | **Settings → Maintenance** |
+| Add lots of series at once, or export my list | **Add manga → Add from a list**, or **Settings → Maintenance → Series list** |
 
 On a phone, Activity, Calendar and the light/dark switch are in the ☰ menu.
 
@@ -340,6 +342,25 @@ It keeps `BACKUP_KEEP_DAYS` days of them (default 7). **Settings → Maintenance
 
 > **Copy the `backups` folder somewhere else now and then** (another disk, a USB stick, cloud storage). A backup on the same
 > disk won't help if that disk dies.
+
+### Series list (CSV)
+
+**Settings → Maintenance → Export series list** saves a spreadsheet of every series: title, website, link, library,
+whether it's downloading, preferred website and start-from chapter. It opens in Excel, Numbers or Google Sheets.
+
+**Add manga → Add from a list** (or **Import a list…** next to the export) adds many series at once:
+
+1. Choose a CSV file, or paste a list. It can be:
+   - a list exported from Tranga (to rebuild your library on a new server),
+   - just links, one per line, or
+   - your own spreadsheet with a header row naming any of these columns: `url`, `name`, `website`, `library`,
+     `start_from_chapter`, `downloading` (yes/no), `preferred_website` (yes/no).
+2. Check the preview (rows Tranga can't use are shown in red with the reason), pick the library, and click **Import**.
+3. Tranga adds about one series a second in the background. You can leave the page. Each row ends up as
+   *Added*, *Already in Tranga* or *Not added*, with the reason. **Download the rows that weren't added** to fix them and import again.
+
+A link always finds the right series. With only a title, Tranga searches for it and adds it only if exactly one series
+has that title. Rows with the same title are one series on several websites.
 
 ### Settings backup (one click)
 
